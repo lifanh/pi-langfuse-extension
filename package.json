@@ -1,0 +1,45 @@
+{
+  "name": "@lifanh/pi-langfuse",
+  "version": "0.1.0",
+  "description": "Privacy-first Langfuse observability extension for Pi Coding Agent",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./redaction": "./src/redaction.js",
+    "./config": "./src/config.js",
+    "./capture-policy": "./src/capture-policy.js"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "langfuse",
+    "observability",
+    "tracing",
+    "privacy"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "dependencies": {
+    "@langfuse/client": "^5.3.0",
+    "@langfuse/otel": "^5.3.0",
+    "@langfuse/tracing": "^5.3.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
