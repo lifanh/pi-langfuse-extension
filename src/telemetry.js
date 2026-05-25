@@ -13,7 +13,7 @@ export function buildRunPayload(event = {}, ctx = {}, config) {
       },
       metadata: {
         agent: "pi",
-        extension: "@lifanh/pi-langfuse",
+        extension: "@lifanh/pi-langfuse-extension",
         model,
         provider,
         cwd: event.systemPromptOptions?.cwd ?? process.cwd(),
