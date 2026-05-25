@@ -1,4 +1,5 @@
 import { loadConfig, sanitizeConfigForLog } from "./src/config.js";
+import { redactValue } from "./src/redaction.js";
 import { buildRunPayload, buildToolPayload } from "./src/telemetry.js";
 import {
   initTransport,
@@ -90,7 +91,8 @@ export default async function lifanhPiLangfuse(pi) {
       return;
     }
     currentRun.endedAt = new Date();
-    const output = config.capturePolicy.captureOutputs ? event.messages?.at?.(-1) : undefined;
+    const rawOutput = config.capturePolicy.captureOutputs ? event.messages?.at?.(-1) : undefined;
+    const output = rawOutput !== undefined ? redactValue(rawOutput) : undefined;
     endAgentSpan(currentRun.agentSpan, output);
     await flush();
     currentRun = null;
