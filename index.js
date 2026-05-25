@@ -6,13 +6,13 @@ export default async function lifanhPiLangfuse(pi) {
   let currentRun = null;
 
   pi.registerCommand?.("lifanh-langfuse-status", {
-    description: "Show @lifanh/pi-langfuse configuration status",
+    description: "Show @lifanh/pi-langfuse-extension configuration status",
     handler: async (_args, ctx) => {
       config = loadConfig();
       const safeConfig = sanitizeConfigForLog(config);
       const message = safeConfig
-        ? `@lifanh/pi-langfuse configured for ${safeConfig.host} with public key ${safeConfig.publicKey}`
-        : "@lifanh/pi-langfuse is not configured. Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.";
+        ? `@lifanh/pi-langfuse-extension configured for ${safeConfig.host} with public key ${safeConfig.publicKey}`
+        : "@lifanh/pi-langfuse-extension is not configured. Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.";
       ctx?.ui?.notify?.(message, safeConfig ? "info" : "warning");
       if (!ctx?.ui) {
         console.log(message);
