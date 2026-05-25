@@ -6,9 +6,9 @@ This package starts from a strict privacy model: metadata-only tracing by defaul
 
 ## Status
 
-Early scaffold. The current implementation establishes the Pi extension entrypoint, configuration model, capture policy, redaction pipeline, and tests. Langfuse transport will be added behind these privacy controls.
+Active development. The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
 
-Do not publish a stable `1.0.0` until trace transport, shutdown flushing, golden trace tests, and fallback behavior are implemented and verified.
+Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
 
 ## Install
 
@@ -46,6 +46,24 @@ The extension exposes a namespaced Pi command:
 ```text
 /lifanh-langfuse-status
 ```
+
+## Architecture
+
+```
+Pi Agent Events
+  │
+  ├── before_agent_start  ──▶  initTransport()  ──▶  createAgentSpan()
+  ├── tool_execution_start ──▶  createToolSpan()  (child of agent span)
+  ├── tool_execution_end   ──▶  endToolSpan()     (update + end)
+  ├── agent_end            ──▶  endAgentSpan()    ──▶  flush()
+  └── session_shutdown     ──▶  shutdown()
+```
+
+**Transport layer** (`src/transport.js`):
+- Uses `NodeTracerProvider` from `@opentelemetry/sdk-trace-node` with `LangfuseSpanProcessor` from `@langfuse/otel`
+- Creates Langfuse observations via `startObservation` from `@langfuse/tracing`
+- Propagates trace-level attributes (name, tags, metadata) via `propagateAttributes`
+- All errors are caught and logged — Langfuse failures never break the Pi agent
 
 ## Privacy Defaults
 

@@ -1,5 +1,17 @@
 import { loadConfig, sanitizeConfigForLog } from "./src/config.js";
+import { redactValue } from "./src/redaction.js";
 import { buildRunPayload, buildToolPayload } from "./src/telemetry.js";
+import {
+  initTransport,
+  isReady,
+  createAgentSpan,
+  setTraceAttributes,
+  createToolSpan,
+  endToolSpan,
+  endAgentSpan,
+  flush,
+  shutdown,
+} from "./src/transport.js";
 
 export default async function lifanhPiLangfuse(pi) {
   let config = loadConfig();
@@ -25,10 +37,21 @@ export default async function lifanhPiLangfuse(pi) {
     if (!config) {
       return;
     }
+    initTransport(config);
+    const payload = buildRunPayload(event, ctx, config);
+    const agentSpan = createAgentSpan("pi-agent-run", payload);
+    if (agentSpan) {
+      setTraceAttributes(agentSpan, {
+        traceName: "pi-agent-run",
+        tags: ["pi-coding-agent"],
+        metadata: payload.metadata ?? {},
+      });
+    }
     currentRun = {
       startedAt: new Date(),
-      payload: buildRunPayload(event, ctx, config),
+      payload,
       tools: new Map(),
+      agentSpan,
     };
   });
 
@@ -37,9 +60,13 @@ export default async function lifanhPiLangfuse(pi) {
       return;
     }
     const id = String(event.toolCallId ?? event.id ?? currentRun.tools.size + 1);
+    const payload = buildToolPayload(event, config);
+    const toolName = payload.metadata?.toolName ?? "tool";
+    const toolSpan = createToolSpan(currentRun.agentSpan, `tool:${toolName}`, payload);
     currentRun.tools.set(id, {
       startedAt: new Date(),
-      payload: buildToolPayload(event, config),
+      payload,
+      toolSpan,
     });
   });
 
@@ -49,10 +76,13 @@ export default async function lifanhPiLangfuse(pi) {
     }
     const id = String(event.toolCallId ?? event.id ?? "");
     const existing = currentRun.tools.get(id) ?? {};
+    const endPayload = buildToolPayload(event, config);
+    const merged = { ...existing.payload, ...endPayload };
+    endToolSpan(existing.toolSpan, merged);
     currentRun.tools.set(id, {
       ...existing,
       endedAt: new Date(),
-      payload: { ...existing.payload, ...buildToolPayload(event, config) },
+      payload: merged,
     });
   });
 
@@ -61,12 +91,18 @@ export default async function lifanhPiLangfuse(pi) {
       return;
     }
     currentRun.endedAt = new Date();
-    currentRun.output = config.capturePolicy.captureOutputs ? event.messages?.at?.(-1) : undefined;
-    // Langfuse transport will be added after the privacy/test surface is stable.
+    const rawOutput = config.capturePolicy.captureOutputs ? event.messages?.at?.(-1) : undefined;
+    const output = rawOutput !== undefined ? redactValue(rawOutput) : undefined;
+    endAgentSpan(currentRun.agentSpan, output);
+    await flush();
     currentRun = null;
   });
 
   pi.on?.("session_shutdown", async () => {
+    if (currentRun?.agentSpan) {
+      endAgentSpan(currentRun.agentSpan, undefined);
+    }
+    await shutdown();
     currentRun = null;
   });
 }
