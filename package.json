@@ -30,7 +30,8 @@
     "@langfuse/client": "^5.3.0",
     "@langfuse/otel": "^5.3.0",
     "@langfuse/tracing": "^5.3.0",
-    "@opentelemetry/sdk-trace-base": "^2.0.1"
+    "@opentelemetry/sdk-trace-base": "^2.0.1",
+    "@opentelemetry/sdk-trace-node": "^2.0.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
