@@ -37,6 +37,6 @@ test("sanitizes secret values before logging", () => {
 test("uses a namespaced config path", () => {
   assert.equal(
     configPathForHome("/Users/lifan"),
-    "/Users/lifan/.pi/agent/@lifanh/pi-langfuse/config.json",
+    "/Users/lifan/.pi/agent/@lifanh/pi-langfuse-extension/config.json",
   );
 });
