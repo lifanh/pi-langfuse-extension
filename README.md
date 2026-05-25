@@ -1,8 +1,8 @@
-# @lifanh/pi-langfuse
+# @lifanh/pi-langfuse-extension
 
 Privacy-first Langfuse observability extension for [Pi Coding Agent](https://github.com/badlogic/pi-mono).
 
-This package is intentionally scoped as `@lifanh/pi-langfuse` to avoid colliding with the existing unscoped `pi-langfuse` package. It starts from a stricter privacy model: metadata-only tracing by default, explicit opt-in for content capture, and one shared redaction path for every payload before it can reach Langfuse.
+This package starts from a strict privacy model: metadata-only tracing by default, explicit opt-in for content capture, and one shared redaction path for every payload before it can reach Langfuse.
 
 ## Status
 
@@ -15,7 +15,7 @@ Do not publish a stable `1.0.0` until trace transport, shutdown flushing, golden
 After publication:
 
 ```bash
-pi install npm:@lifanh/pi-langfuse
+pi install npm:@lifanh/pi-langfuse-extension
 ```
 
 For local development:
@@ -38,7 +38,7 @@ export LANGFUSE_HOST=https://cloud.langfuse.com
 Configuration files are namespaced under:
 
 ```text
-~/.pi/agent/@lifanh/pi-langfuse/config.json
+~/.pi/agent/@lifanh/pi-langfuse-extension/config.json
 ```
 
 The extension exposes a namespaced Pi command:
@@ -83,7 +83,7 @@ The redactor covers:
 
 ## Development Guardrails
 
-This repo exists because the current unscoped `pi-langfuse` package is useful but has gaps around privacy controls, redaction, tests, and event typing. Changes here should preserve these constraints:
+Changes here should preserve these constraints:
 
 - No production telemetry payload bypasses `redactValue`.
 - No raw prompt, response, tool I/O, system prompt, cwd, or file path capture without an explicit capture flag.
