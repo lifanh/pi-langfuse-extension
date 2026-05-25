@@ -8,7 +8,7 @@ import { REDACTED } from "./redaction.js";
 export const DEFAULT_LANGFUSE_HOST = "https://cloud.langfuse.com";
 
 export function configPathForHome(home = homedir()) {
-  return resolve(home, ".pi", "agent", "@lifanh", "pi-langfuse", "config.json");
+  return resolve(home, ".pi", "agent", "@lifanh", "pi-langfuse-extension", "config.json");
 }
 
 export function loadConfigFromEnv(env = process.env) {
