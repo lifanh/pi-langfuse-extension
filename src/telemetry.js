@@ -1,9 +1,18 @@
 import { applyCapturePolicy } from "./capture-policy.js";
 
+export function resolveSessionId(ctx = {}) {
+  const sessionFile = ctx.sessionManager?.getSessionFile?.();
+  if (!sessionFile) {
+    return undefined;
+  }
+  const base = sessionFile.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
+  return base || undefined;
+}
+
 export function buildRunPayload(event = {}, ctx = {}, config) {
   const model = event.model ?? ctx.model?.id;
   const provider = event.provider ?? ctx.model?.provider;
-  const sessionId = event.sessionId ?? ctx.sessionId ?? ctx.session?.id;
+  const sessionId = resolveSessionId(ctx);
   const policy = config?.capturePolicy;
   return {
     sessionId,
