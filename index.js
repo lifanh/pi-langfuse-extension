@@ -41,14 +41,19 @@ export default async function lifanhPiLangfuse(pi) {
     const payload = buildRunPayload(event, ctx, config);
     const agentSpan = createAgentSpan("pi-agent-run", payload);
     if (agentSpan) {
-      setTraceAttributes(agentSpan, {
+      const traceAttrs = {
         traceName: "pi-agent-run",
         tags: ["pi-coding-agent"],
         metadata: payload.metadata ?? {},
-      });
+      };
+      if (payload.sessionId) {
+        traceAttrs.sessionId = payload.sessionId;
+      }
+      setTraceAttributes(agentSpan, traceAttrs);
     }
     currentRun = {
       startedAt: new Date(),
+      sessionId: payload.sessionId,
       payload,
       tools: new Map(),
       agentSpan,
