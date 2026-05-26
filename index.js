@@ -25,9 +25,11 @@ export default async function lifanhPiLangfuse(pi) {
     if (!config) {
       return;
     }
+    const payload = buildRunPayload(event, ctx, config);
     currentRun = {
       startedAt: new Date(),
-      payload: buildRunPayload(event, ctx, config),
+      sessionId: payload.sessionId,
+      payload,
       tools: new Map(),
     };
   });
