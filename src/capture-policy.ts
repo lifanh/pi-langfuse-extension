@@ -1,6 +1,17 @@
 import { redactValue } from "./redaction.js";
 
-function envFlag(env, name, defaultValue = false) {
+export interface CapturePolicy {
+  readonly captureInputs: boolean;
+  readonly captureOutputs: boolean;
+  readonly captureToolIo: boolean;
+  readonly captureSystemPrompt: boolean;
+  readonly captureCwd: boolean;
+  readonly debug: boolean;
+}
+
+export type EnvLike = Readonly<Record<string, string | undefined>>;
+
+function envFlag(env: EnvLike, name: string, defaultValue = false): boolean {
   const value = env[name];
   if (value === undefined) {
     return defaultValue;
@@ -8,7 +19,9 @@ function envFlag(env, name, defaultValue = false) {
   return /^(1|true|yes|on)$/i.test(String(value));
 }
 
-export function createCapturePolicy(env = process.env) {
+export function createCapturePolicy(
+  env: EnvLike = process.env as EnvLike,
+): CapturePolicy {
   return {
     captureInputs: envFlag(env, "LANGFUSE_CAPTURE_INPUTS"),
     captureOutputs: envFlag(env, "LANGFUSE_CAPTURE_OUTPUTS"),
@@ -19,12 +32,33 @@ export function createCapturePolicy(env = process.env) {
   };
 }
 
-function filterMetadata(metadata, policy) {
+export interface RawPayload {
+  input?: unknown;
+  output?: unknown;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  systemPrompt?: unknown;
+  metadata?: Record<string, unknown> | undefined;
+}
+
+export interface CapturedPayload {
+  metadata: Record<string, unknown> | undefined;
+  input?: unknown;
+  output?: unknown;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  systemPrompt?: unknown;
+}
+
+function filterMetadata(
+  metadata: Record<string, unknown> | undefined,
+  policy: CapturePolicy,
+): Record<string, unknown> | undefined {
   if (!metadata || typeof metadata !== "object") {
     return undefined;
   }
 
-  const output = {};
+  const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(metadata)) {
     if (key === "cwd" && !policy.captureCwd) {
       continue;
@@ -34,8 +68,11 @@ function filterMetadata(metadata, policy) {
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-export function applyCapturePolicy(payload, policy = createCapturePolicy()) {
-  const output = {
+export function applyCapturePolicy(
+  payload: RawPayload,
+  policy: CapturePolicy = createCapturePolicy(),
+): CapturedPayload {
+  const output: CapturedPayload = {
     metadata: filterMetadata(payload.metadata, policy),
   };
 

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createCapturePolicy, applyCapturePolicy } from "../src/capture-policy.js";
+import {
+  createCapturePolicy,
+  applyCapturePolicy,
+  type CapturedPayload,
+} from "../src/capture-policy.js";
 
 test("defaults to metadata-only capture", () => {
   const policy = createCapturePolicy({});
@@ -33,20 +37,23 @@ test("captures enabled fields after redaction", () => {
     LANGFUSE_CAPTURE_CWD: "true",
   });
 
-  const result = applyCapturePolicy(
+  const result: CapturedPayload = applyCapturePolicy(
     {
       input: { prompt: "token ghp_abcdefghijklmnopqrstuvwxyz123456" },
       output: "ok",
       metadata: { cwd: "/Users/lifan/private" },
       toolInput: { command: "echo safe" },
-      toolOutput: "LANGFUSE_SECRET_KEY=sk-lf-123",
+      toolOutput: "LANGFUSE_SECRET_KEY=[REDACTED:secret-value]",
     },
     policy,
   );
 
-  assert.equal(result.input.prompt, "token [REDACTED_SECRET]");
+  const inputObj = result.input as { prompt: string };
+  assert.equal(inputObj.prompt, "token [REDACTED_SECRET]");
   assert.equal(result.output, "ok");
-  assert.match(result.metadata.cwd, /^\[PATH_HASH:[a-f0-9]{12}\]$/);
+  const cwd = result.metadata?.["cwd"];
+  assert.ok(typeof cwd === "string");
+  assert.match(cwd, /^\[PATH_HASH:[a-f0-9]{12}\]$/);
   assert.deepEqual(result.toolInput, { command: "echo safe" });
   assert.equal(result.toolOutput, "LANGFUSE_SECRET_KEY=[REDACTED_SECRET]");
 });

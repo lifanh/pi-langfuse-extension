@@ -3,15 +3,40 @@
   "version": "0.1.0",
   "description": "Privacy-first Langfuse observability extension for Pi Coding Agent",
   "type": "module",
-  "main": "index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./redaction": "./src/redaction.js",
-    "./config": "./src/config.js",
-    "./capture-policy": "./src/capture-policy.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./redaction": {
+      "types": "./dist/src/redaction.d.ts",
+      "import": "./dist/src/redaction.js"
+    },
+    "./config": {
+      "types": "./dist/src/config.d.ts",
+      "import": "./dist/src/config.js"
+    },
+    "./capture-policy": {
+      "types": "./dist/src/capture-policy.d.ts",
+      "import": "./dist/src/capture-policy.js"
+    }
   },
+  "files": [
+    "dist",
+    "src",
+    "index.ts",
+    "tsconfig.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tests/tsconfig.json --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "keywords": [
     "pi-package",
@@ -23,7 +48,7 @@
   ],
   "pi": {
     "extensions": [
-      "./index.js"
+      "./dist/index.js"
     ]
   },
   "dependencies": {
@@ -35,6 +60,11 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
   },
   "engines": {
     "node": ">=22"

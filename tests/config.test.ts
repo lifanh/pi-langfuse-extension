@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { loadConfigFromEnv, sanitizeConfigForLog, configPathForHome } from "../src/config.js";
+import {
+  loadConfigFromEnv,
+  sanitizeConfigForLog,
+  configPathForHome,
+} from "../src/config.js";
 
 test("loads config from environment without enabling content capture by default", () => {
   const config = loadConfigFromEnv({
@@ -10,6 +14,7 @@ test("loads config from environment without enabling content capture by default"
     LANGFUSE_HOST: "https://cloud.langfuse.com",
   });
 
+  assert.ok(config);
   assert.equal(config.publicKey, "pk-lf-public");
   assert.equal(config.secretKey, "sk-lf-secret");
   assert.equal(config.host, "https://cloud.langfuse.com");
