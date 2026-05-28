@@ -6,7 +6,7 @@ This package starts from a strict privacy model: metadata-only tracing by defaul
 
 ## Status
 
-Active pre-1.0 development. The current package version is `0.1.0`, and releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
+Active pre-1.0 development. Version `0.1.0` is published on npm as `@lifanh/pi-langfuse-extension`, and future releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
 
 The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `generation` observations for provider/model calls and nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
 
