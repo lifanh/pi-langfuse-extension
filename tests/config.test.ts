@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   loadConfigFromEnv,
+  loadConfigFromFile,
+  saveConfig,
   sanitizeConfigForLog,
   configPathForHome,
 } from "../src/config.js";
@@ -44,4 +46,25 @@ test("uses a namespaced config path", () => {
     configPathForHome("/Users/lifan"),
     "/Users/lifan/.pi/agent/@lifanh/pi-langfuse-extension/config.json",
   );
+});
+
+test("saveConfig persists configuration for later load", () => {
+  const path = `${process.cwd()}/.tmp-test-config/config.json`;
+  saveConfig(
+    {
+      publicKey: "pk-lf-public",
+      secretKey: "sk-lf-secret",
+      host: "https://us.cloud.langfuse.com",
+      capture: { LANGFUSE_CAPTURE_INPUTS: "true", LANGFUSE_DEBUG: "true" },
+    },
+    path,
+  );
+
+  const config = loadConfigFromFile(path);
+  assert.ok(config);
+  assert.equal(config.publicKey, "pk-lf-public");
+  assert.equal(config.secretKey, "sk-lf-secret");
+  assert.equal(config.host, "https://us.cloud.langfuse.com");
+  assert.equal(config.capturePolicy.captureInputs, true);
+  assert.equal(config.capturePolicy.debug, true);
 });

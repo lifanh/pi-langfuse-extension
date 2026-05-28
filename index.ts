@@ -1,13 +1,14 @@
 import type {
   AgentEndEvent,
+  BeforeProviderRequestEvent,
   BeforeAgentStartEvent,
   ExtensionAPI,
   ExtensionContext,
   ExtensionCommandContext,
+  TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
-/** Pi tool execution events. Re-declared locally because the public package entry
- * does not re-export these event types (they live behind a deep path). */
+/** Pi events missing from the public package exports are re-declared locally. */
 interface ToolExecutionStartEvent {
   type: "tool_execution_start";
   toolCallId: string;
@@ -22,21 +23,66 @@ interface ToolExecutionEndEvent {
   result: unknown;
   isError: boolean;
 }
+
+interface ProviderResponseEvent {
+  type: "after_provider_response";
+  status: number;
+  headers: Record<string, string>;
+}
+
+interface AssistantMessageEndEvent {
+  type: "message_end";
+  message: {
+    role?: string | undefined;
+    content?: unknown;
+    api?: string | undefined;
+    provider?: string | undefined;
+    model?: string | undefined;
+    responseModel?: string | undefined;
+    responseId?: string | undefined;
+    usage?: {
+      input?: number | undefined;
+      output?: number | undefined;
+      cacheRead?: number | undefined;
+      cacheWrite?: number | undefined;
+      totalTokens?: number | undefined;
+      cost?: {
+        input?: number | undefined;
+        output?: number | undefined;
+        cacheRead?: number | undefined;
+        cacheWrite?: number | undefined;
+        total?: number | undefined;
+      } | undefined;
+    } | undefined;
+    stopReason?: string | undefined;
+    errorMessage?: string | undefined;
+  };
+}
+
 import type { LangfuseAgent, LangfuseTool } from "@langfuse/tracing";
 
-import { loadConfig, sanitizeConfigForLog, type LangfuseConfig } from "./src/config.js";
+import {
+  loadConfig,
+  sanitizeConfigForLog,
+  saveConfig,
+  type LangfuseConfig,
+} from "./src/config.js";
 import { redactValue } from "./src/redaction.js";
 import {
+  buildGenerationPayload,
   buildRunPayload,
   buildToolPayload,
   type RunContextLike,
   type RunPayload,
+  type GenerationPayload,
 } from "./src/telemetry.js";
 import type { CapturedPayload } from "./src/capture-policy.js";
 import {
   createAgentSpan,
+  createGenerationSpan,
   createToolSpan,
   endAgentSpan,
+  endGenerationSpan,
   endToolSpan,
   flush,
   initTransport,
@@ -52,13 +98,65 @@ interface ToolRun {
   toolSpan: LangfuseTool | null;
 }
 
+interface GenerationRun {
+  turnIndex: number;
+  request: BeforeProviderRequestEvent | undefined;
+  response: ProviderResponseEvent | undefined;
+  payload: GenerationPayload | undefined;
+  generationSpan: import("@langfuse/tracing").LangfuseGeneration | null;
+}
+
 interface CurrentRun {
   startedAt: Date;
   endedAt?: Date;
   sessionId: string | undefined;
   payload: RunPayload;
   tools: Map<string, ToolRun>;
+  generations: Map<number, GenerationRun>;
+  activeTurnIndex: number;
+  activeMessageEnd: AssistantMessageEndEvent | undefined;
   agentSpan: LangfuseAgent | null;
+}
+
+function notify(
+  ctx: ExtensionCommandContext,
+  message: string,
+  level: "info" | "warning" | "error" = "info",
+): void {
+  if (ctx.hasUI) {
+    ctx.ui.notify(message, level);
+  } else {
+    console.log(message);
+  }
+}
+
+function parseConfigureArgs(args: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of args.trim().split(/\s+/)) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) {
+      continue;
+    }
+    out[part.slice(0, eq)] = part.slice(eq + 1);
+  }
+  return out;
+}
+
+function captureArgs(args: Record<string, string>): Record<string, string | undefined> {
+  const capture: Record<string, string | undefined> = {};
+  for (const [argName, envName] of [
+    ["captureInputs", "LANGFUSE_CAPTURE_INPUTS"],
+    ["captureOutputs", "LANGFUSE_CAPTURE_OUTPUTS"],
+    ["captureToolIo", "LANGFUSE_CAPTURE_TOOL_IO"],
+    ["captureSystemPrompt", "LANGFUSE_CAPTURE_SYSTEM_PROMPT"],
+    ["captureCwd", "LANGFUSE_CAPTURE_CWD"],
+    ["debug", "LANGFUSE_DEBUG"],
+  ] as const) {
+    if (args[argName] !== undefined) {
+      capture[envName] = args[argName];
+    }
+  }
+  return capture;
 }
 
 function adaptContext(ctx: ExtensionContext): RunContextLike {
@@ -86,11 +184,35 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       const message = safeConfig
         ? `@lifanh/pi-langfuse-extension configured for ${safeConfig.host} with public key ${safeConfig.publicKey}`
         : "@lifanh/pi-langfuse-extension is not configured. Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.";
-      if (ctx.hasUI) {
-        ctx.ui.notify(message, safeConfig ? "info" : "warning");
-      } else {
-        console.log(message);
+      notify(ctx, message, safeConfig ? "info" : "warning");
+    },
+  });
+
+  pi.registerCommand("lifanh-langfuse-configure", {
+    description:
+      "Persist Langfuse config. Usage: /lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true]",
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      const parsed = parseConfigureArgs(args);
+      if (!parsed["publicKey"] || !parsed["secretKey"]) {
+        notify(
+          ctx,
+          "Usage: /lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com]",
+          "warning",
+        );
+        return;
       }
+      const persistInput = {
+        publicKey: parsed["publicKey"],
+        secretKey: parsed["secretKey"],
+        capture: captureArgs(parsed),
+      };
+      saveConfig(
+        parsed["host"]
+          ? { ...persistInput, host: parsed["host"] }
+          : persistInput,
+      );
+      config = loadConfig();
+      notify(ctx, "@lifanh/pi-langfuse-extension config saved.");
     },
   });
 
@@ -99,7 +221,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     if (!config) {
       return;
     }
-    initTransport(config);
+    await initTransport(config);
     const payload = buildRunPayload(event, adaptContext(ctx), config);
     const agentSpan = createAgentSpan("pi-agent-run", payload);
     if (agentSpan) {
@@ -118,8 +240,91 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       sessionId: payload.sessionId,
       payload,
       tools: new Map(),
+      generations: new Map(),
+      activeTurnIndex: 0,
+      activeMessageEnd: undefined,
       agentSpan,
     };
+  });
+
+  pi.on("turn_start", async (event) => {
+    if (!currentRun) {
+      return;
+    }
+    currentRun.activeTurnIndex = event.turnIndex;
+    currentRun.activeMessageEnd = undefined;
+  });
+
+  pi.on("before_provider_request", async (event: BeforeProviderRequestEvent) => {
+    if (!currentRun || !config) {
+      return;
+    }
+    const turnIndex = currentRun.activeTurnIndex;
+    const payload = buildGenerationPayload(event, undefined, { turnIndex }, undefined, config);
+    const generationSpan = createGenerationSpan(
+      currentRun.agentSpan,
+      `generation:${turnIndex}`,
+      payload,
+    );
+    currentRun.generations.set(turnIndex, {
+      turnIndex,
+      request: event,
+      response: undefined,
+      payload,
+      generationSpan,
+    });
+  });
+
+  pi.on("after_provider_response", async (event: ProviderResponseEvent) => {
+    if (!currentRun || !config) {
+      return;
+    }
+    const turnIndex = currentRun.activeTurnIndex;
+    const existing = currentRun.generations.get(turnIndex);
+    const payload = buildGenerationPayload(
+      existing?.request,
+      event,
+      { turnIndex },
+      undefined,
+      config,
+    );
+    currentRun.generations.set(turnIndex, {
+      turnIndex,
+      request: existing?.request,
+      response: event,
+      payload,
+      generationSpan: existing?.generationSpan ?? null,
+    });
+  });
+
+  pi.on("message_end", async (event: AssistantMessageEndEvent) => {
+    if (!currentRun || event.message.role !== "assistant") {
+      return;
+    }
+    currentRun.activeMessageEnd = event;
+  });
+
+  pi.on("turn_end", async (event: TurnEndEvent) => {
+    if (!currentRun || !config) {
+      return;
+    }
+    const existing = currentRun.generations.get(event.turnIndex);
+    const messageEnd = currentRun.activeMessageEnd;
+    const payload = buildGenerationPayload(
+      existing?.request,
+      existing?.response,
+      event,
+      messageEnd,
+      config,
+    );
+    endGenerationSpan(existing?.generationSpan ?? null, payload);
+    currentRun.generations.set(event.turnIndex, {
+      turnIndex: event.turnIndex,
+      request: existing?.request,
+      response: existing?.response,
+      payload,
+      generationSpan: existing?.generationSpan ?? null,
+    });
   });
 
   pi.on("tool_execution_start", async (event: ToolExecutionStartEvent) => {

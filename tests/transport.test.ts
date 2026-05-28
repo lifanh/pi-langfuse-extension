@@ -78,6 +78,50 @@ test("transport: agent span with child tool span creates proper hierarchy", asyn
   setLangfuseTracerProvider(null);
 });
 
+test("transport: generation spans include model, usage, and cost attributes", async () => {
+  const { exporter, processor, provider } = createTestInfra();
+
+  const root = startObservation("run", {}, { asType: "agent" });
+  const generation = root.startObservation(
+    "generation:0",
+    {
+      input: [{ role: "user", content: "hi" }],
+      model: "claude-sonnet-4",
+      modelParameters: { temperature: 0.1 },
+    },
+    { asType: "generation" },
+  );
+  generation.update({
+    output: "hello",
+    usageDetails: { input: 10, output: 20, total: 30 },
+    costDetails: { total: 0.01 },
+  });
+  generation.end();
+  root.end();
+
+  await processor.forceFlush();
+
+  const span = exporter.getFinishedSpans().find((s) => s.name === "generation:0");
+  assert.ok(span);
+  assert.equal(span.attributes["langfuse.observation.type"], "generation");
+  assert.equal(span.attributes["langfuse.observation.model.name"], "claude-sonnet-4");
+  assert.equal(
+    span.attributes["langfuse.observation.model.parameters"],
+    JSON.stringify({ temperature: 0.1 }),
+  );
+  assert.equal(
+    span.attributes["langfuse.observation.usage_details"],
+    JSON.stringify({ input: 10, output: 20, total: 30 }),
+  );
+  assert.equal(
+    span.attributes["langfuse.observation.cost_details"],
+    JSON.stringify({ total: 0.01 }),
+  );
+
+  await provider.shutdown();
+  setLangfuseTracerProvider(null);
+});
+
 test("transport: metadata attributes propagate to spans", async () => {
   const { exporter, processor, provider } = createTestInfra();
 

@@ -4,17 +4,22 @@ import { LangfuseSpanProcessor } from "@langfuse/otel";
 import {
   startObservation,
   propagateAttributes,
+  setLangfuseTracerProvider,
   type LangfuseAgent,
+  type LangfuseGeneration,
   type LangfuseTool,
+  type LangfuseGenerationAttributes,
   type LangfuseSpanAttributes,
   type ObservationLevel,
 } from "@langfuse/tracing";
 
 import type { CapturedPayload } from "./capture-policy.js";
 import type { LangfuseConfig } from "./config.js";
+import type { GenerationPayload } from "./telemetry.js";
 
 let provider: NodeTracerProvider | null = null;
 let processor: LangfuseSpanProcessor | null = null;
+let transportKey: string | null = null;
 
 const LOG_PREFIX = "[@lifanh/pi-langfuse-extension]";
 
@@ -23,9 +28,28 @@ function logError(scope: string, err: unknown): void {
   console.error(`${LOG_PREFIX} ${scope}:`, message);
 }
 
-export function initTransport(config: LangfuseConfig): void {
-  if (provider) {
+function logDebug(config: LangfuseConfig, message: string): void {
+  if (config.capturePolicy.debug) {
+    console.debug(`${LOG_PREFIX} ${message}`);
+  }
+}
+
+function keyForConfig(config: LangfuseConfig): string {
+  return JSON.stringify({
+    publicKey: config.publicKey,
+    secretKey: config.secretKey,
+    host: config.host,
+  });
+}
+
+export async function initTransport(config: LangfuseConfig): Promise<void> {
+  const nextKey = keyForConfig(config);
+  if (provider && transportKey === nextKey) {
+    logDebug(config, "transport already initialized");
     return;
+  }
+  if (provider) {
+    await shutdown();
   }
   try {
     processor = new LangfuseSpanProcessor({
@@ -34,11 +58,15 @@ export function initTransport(config: LangfuseConfig): void {
       baseUrl: config.host,
     });
     provider = new NodeTracerProvider({ spanProcessors: [processor] });
-    provider.register();
+    setLangfuseTracerProvider(provider);
+    transportKey = nextKey;
+    logDebug(config, `transport initialized for ${config.host}`);
   } catch (err) {
     logError("transport init failed", err);
     provider = null;
     processor = null;
+    transportKey = null;
+    setLangfuseTracerProvider(null);
   }
 }
 
@@ -60,6 +88,12 @@ export function createAgentSpan(
     }
     if (payload.metadata !== undefined) {
       attributes.metadata = payload.metadata;
+    }
+    if (payload.systemPrompt !== undefined) {
+      attributes.metadata = {
+        ...(attributes.metadata ?? {}),
+        systemPrompt: payload.systemPrompt,
+      };
     }
     return startObservation(name, attributes, { asType: "agent" });
   } catch (err) {
@@ -122,7 +156,6 @@ export function setTraceAttributes(
     }
     context.with(trace.setSpan(context.active(), agentSpan.otelSpan), () =>
       propagateAttributes(params, () => {
-        // no-op: we only need the attributes to be applied to the current span.
       }),
     );
   } catch {
@@ -150,6 +183,74 @@ export function createToolSpan(
   } catch (err) {
     logError("createToolSpan failed", err);
     return null;
+  }
+}
+
+export function createGenerationSpan(
+  agentSpan: LangfuseAgent | null,
+  name: string,
+  payload: GenerationPayload,
+): LangfuseGeneration | null {
+  if (!agentSpan) {
+    return null;
+  }
+  try {
+    const attributes: LangfuseGenerationAttributes = {};
+    if (payload.input !== undefined) {
+      attributes.input = payload.input;
+    }
+    if (payload.metadata !== undefined) {
+      attributes.metadata = payload.metadata;
+    }
+    if (payload.model !== undefined) {
+      attributes.model = payload.model;
+    }
+    if (payload.modelParameters !== undefined) {
+      attributes.modelParameters = payload.modelParameters;
+    }
+    return agentSpan.startObservation(name, attributes, { asType: "generation" });
+  } catch (err) {
+    logError("createGenerationSpan failed", err);
+    return null;
+  }
+}
+
+export function endGenerationSpan(
+  generationSpan: LangfuseGeneration | null,
+  payload: GenerationPayload,
+): void {
+  if (!generationSpan) {
+    return;
+  }
+  try {
+    const attrs: LangfuseGenerationAttributes = {};
+    if (payload.output !== undefined) {
+      attrs.output = payload.output;
+    }
+    if (payload.metadata !== undefined) {
+      attrs.metadata = payload.metadata;
+    }
+    if (payload.model !== undefined) {
+      attrs.model = payload.model;
+    }
+    if (payload.modelParameters !== undefined) {
+      attrs.modelParameters = payload.modelParameters;
+    }
+    if (payload.usageDetails !== undefined) {
+      attrs.usageDetails = payload.usageDetails;
+    }
+    if (payload.costDetails !== undefined) {
+      attrs.costDetails = payload.costDetails;
+    }
+    if (payload.isError) {
+      const errorLevel: ObservationLevel = "ERROR";
+      attrs.level = errorLevel;
+      attrs.statusMessage = payload.statusMessage ?? "generation error";
+    }
+    generationSpan.update(attrs);
+    generationSpan.end();
+  } catch {
+    // Langfuse failures must not break Pi agent
   }
 }
 
@@ -223,5 +324,7 @@ export async function shutdown(): Promise<void> {
   } finally {
     provider = null;
     processor = null;
+    transportKey = null;
+    setLangfuseTracerProvider(null);
   }
 }
