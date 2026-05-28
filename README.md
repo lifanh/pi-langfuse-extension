@@ -6,7 +6,7 @@ This package starts from a strict privacy model: metadata-only tracing by defaul
 
 ## Status
 
-Active development. The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
+Active development. The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `generation` observations for provider/model calls and nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
 
 Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
 
@@ -47,22 +47,39 @@ The extension exposes a namespaced Pi command:
 /lifanh-langfuse-status
 ```
 
+Persist configuration from Pi with:
+
+```text
+/lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... host=https://cloud.langfuse.com
+```
+
+Optional capture flags can be saved with the same command:
+
+```text
+/lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... captureInputs=true captureOutputs=true captureToolIo=true captureSystemPrompt=true debug=true
+```
+
 ## Architecture
 
 ```
 Pi Agent Events
   │
-  ├── before_agent_start  ──▶  initTransport()  ──▶  createAgentSpan()
-  ├── tool_execution_start ──▶  createToolSpan()  (child of agent span)
-  ├── tool_execution_end   ──▶  endToolSpan()     (update + end)
-  ├── agent_end            ──▶  endAgentSpan()    ──▶  flush()
-  └── session_shutdown     ──▶  shutdown()
+  ├── before_agent_start       ──▶  initTransport()  ──▶  createAgentSpan()
+  ├── before_provider_request  ──▶  createGenerationSpan() (child of agent span)
+  ├── after_provider_response  ──▶  update generation metadata
+  ├── turn_end/message_end     ──▶  endGenerationSpan()    (usage + output + errors)
+  ├── tool_execution_start     ──▶  createToolSpan()       (child of agent span)
+  ├── tool_execution_end       ──▶  endToolSpan()          (update + end)
+  ├── agent_end                ──▶  endAgentSpan()         ──▶  flush()
+  └── session_shutdown         ──▶  shutdown()
 ```
 
 **Transport layer** (`src/transport.js`):
 - Uses `NodeTracerProvider` from `@opentelemetry/sdk-trace-node` with `LangfuseSpanProcessor` from `@langfuse/otel`
 - Creates Langfuse observations via `startObservation` from `@langfuse/tracing`
+- Uses Langfuse's isolated tracer provider hook instead of registering a global OpenTelemetry provider
 - Propagates trace-level attributes (name, tags, metadata) via `propagateAttributes`
+- Reinitializes transport if saved/env host or credentials change during a long-running Pi process
 - All errors are caught and logged — Langfuse failures never break the Pi agent
 
 ## Privacy Defaults
@@ -75,6 +92,7 @@ LANGFUSE_CAPTURE_OUTPUTS=false
 LANGFUSE_CAPTURE_TOOL_IO=false
 LANGFUSE_CAPTURE_SYSTEM_PROMPT=false
 LANGFUSE_CAPTURE_CWD=false
+LANGFUSE_DEBUG=false
 ```
 
 Enable fields only when the Langfuse project is allowed to receive that data:
@@ -83,6 +101,7 @@ Enable fields only when the Langfuse project is allowed to receive that data:
 export LANGFUSE_CAPTURE_INPUTS=true
 export LANGFUSE_CAPTURE_OUTPUTS=true
 export LANGFUSE_CAPTURE_TOOL_IO=true
+export LANGFUSE_CAPTURE_SYSTEM_PROMPT=true
 ```
 
 Even when capture is enabled, payloads pass through the shared redaction pipeline.
