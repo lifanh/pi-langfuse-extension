@@ -6,13 +6,13 @@ This package starts from a strict privacy model: metadata-only tracing by defaul
 
 ## Status
 
-Active development. The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `generation` observations for provider/model calls and nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
+Active pre-1.0 development. The current package version is `0.1.0`, and releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
+
+The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `generation` observations for provider/model calls and nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
 
 Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
 
 ## Install
-
-After publication:
 
 ```bash
 pi install npm:@lifanh/pi-langfuse-extension
@@ -24,6 +24,17 @@ For local development:
 npm install
 npm test
 ```
+
+## Release
+
+Publishing is automated through GitHub Actions:
+
+1. Update the package version.
+2. Push the version commit and tag to GitHub.
+3. Publish a GitHub Release for that tag.
+4. The `Publish` workflow runs `npm ci`, typechecking, tests, build, `npm pack --dry-run`, and `npm publish`.
+
+The workflow publishes to the official npm registry with OIDC-based npm Trusted Publishing, so no long-lived npm token is stored in GitHub.
 
 ## Configuration
 
@@ -131,7 +142,10 @@ Changes here should preserve these constraints:
 ## Scripts
 
 ```bash
+npm run typecheck
 npm test
+npm run build
+npm pack --dry-run
 ```
 
 ## License
