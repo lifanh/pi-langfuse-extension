@@ -170,6 +170,15 @@ test("langfuse-privacy applies presets and all toggles to saved config", async (
     assert.equal(saved.capture.LANGFUSE_CAPTURE_TOOL_IO, "false");
     assert.equal(saved.capture.LANGFUSE_CAPTURE_SYSTEM_PROMPT, "false");
     assert.equal(saved.capture.LANGFUSE_CAPTURE_CWD, "false");
+
+    await privacy.handler("all=yes", ctx);
+    saved = JSON.parse(readFileSync(configPathForHome(home), "utf8"));
+    assert.equal(saved.capture.LANGFUSE_CAPTURE_INPUTS, "false");
+    assert.equal(saved.capture.LANGFUSE_CAPTURE_OUTPUTS, "false");
+    assert.equal(saved.capture.LANGFUSE_CAPTURE_TOOL_IO, "false");
+    assert.equal(saved.capture.LANGFUSE_CAPTURE_SYSTEM_PROMPT, "false");
+    assert.equal(saved.capture.LANGFUSE_CAPTURE_CWD, "false");
+    assert.match(ctx.ui.messages.at(-1)?.message ?? "", /Invalid value for all='yes'/);
   });
 });
 

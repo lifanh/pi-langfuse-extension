@@ -1,0 +1,9 @@
+{
+  "publicKey": "pk-lf-public",
+  "secretKey": "sk-lf-secret",
+  "host": "https://us.cloud.langfuse.com",
+  "capture": {
+    "LANGFUSE_CAPTURE_INPUTS": "true",
+    "LANGFUSE_DEBUG": "true"
+  }
+}

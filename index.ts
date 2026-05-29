@@ -541,6 +541,14 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
         updates = { ...updates, ...preset };
       }
       if (parsed["all"] !== undefined) {
+        if (parsed["all"] !== "true" && parsed["all"] !== "false") {
+          notify(
+            ctx,
+            `Invalid value for all='${parsed["all"]}'. Use all=true or all=false.`,
+            "warning",
+          );
+          return;
+        }
         for (const [, envName] of CAPTURE_ARG_TO_ENV) {
           if (envName !== "LANGFUSE_DEBUG") {
             updates[envName] = parsed["all"];
