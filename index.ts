@@ -93,6 +93,7 @@ import {
   flush,
   getLastError,
   initTransport,
+  isReady,
   setTraceAttributes,
   shutdown,
   type TraceAttributes,
@@ -601,7 +602,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     }
     await initTransport(config);
     if (ctx.hasUI) {
-      ctx.ui.setStatus(STATUS_KEY, "◉ langfuse");
+      ctx.ui.setStatus(STATUS_KEY, isReady() ? "◉ langfuse" : undefined);
     }
     const transportError = getLastError();
     const transportErrorKey = transportError
