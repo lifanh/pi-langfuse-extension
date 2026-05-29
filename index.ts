@@ -176,7 +176,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
   let config: LangfuseConfig | null = loadConfig();
   let currentRun: CurrentRun | null = null;
 
-  pi.registerCommand("lifanh-langfuse-status", {
+  pi.registerCommand("langfuse-status", {
     description: "Show @lifanh/pi-langfuse-extension configuration status",
     handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
       config = loadConfig();
@@ -188,15 +188,15 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     },
   });
 
-  pi.registerCommand("lifanh-langfuse-configure", {
+  pi.registerCommand("langfuse-configure", {
     description:
-      "Persist Langfuse config. Usage: /lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true]",
+      "Persist Langfuse config. Usage: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true]",
     handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
       const parsed = parseConfigureArgs(args);
       if (!parsed["publicKey"] || !parsed["secretKey"]) {
         notify(
           ctx,
-          "Usage: /lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com]",
+          "Usage: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com]",
           "warning",
         );
         return;
