@@ -10,6 +10,7 @@ import {
   setLangfuseTracerProvider,
 } from "@langfuse/tracing";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
+import type { Attributes } from "@opentelemetry/api";
 
 interface TestInfra {
   exporter: InMemorySpanExporter;
@@ -170,6 +171,56 @@ test("transport: error tool spans set ERROR level", async () => {
 
   await provider.shutdown();
   setLangfuseTracerProvider(null);
+});
+
+test("transport: init registers OTel context so trace attributes propagate", async () => {
+  const {
+    createAgentSpan,
+    initTransport,
+    setTraceAttributes,
+    shutdown,
+  } = await import("../src/transport.js");
+  const { createCapturePolicy } = await import("../src/capture-policy.js");
+
+  await initTransport({
+    publicKey: "pk-lf-test",
+    secretKey: "sk-lf-test",
+    host: "http://127.0.0.1:9",
+    capturePolicy: createCapturePolicy({}),
+  });
+
+  try {
+    const root = createAgentSpan("pi-agent-run", { metadata: undefined });
+    assert.ok(root);
+
+    setTraceAttributes(root, {
+      traceName: "pi-agent-run",
+      tags: ["pi-coding-agent"],
+      sessionId: "session-123",
+      metadata: {
+        agent: "pi",
+        count: 2,
+        enabled: true,
+        nested: { ignored: true },
+      },
+    });
+
+    const spanAttributes = (
+      root.otelSpan as unknown as { attributes: Attributes }
+    ).attributes;
+
+    assert.equal(spanAttributes["langfuse.trace.name"], "pi-agent-run");
+    assert.deepEqual(spanAttributes["langfuse.trace.tags"], [
+      "pi-coding-agent",
+    ]);
+    assert.equal(spanAttributes["session.id"], "session-123");
+    assert.equal(spanAttributes["langfuse.trace.metadata.agent"], "pi");
+    assert.equal(spanAttributes["langfuse.trace.metadata.count"], "2");
+    assert.equal(spanAttributes["langfuse.trace.metadata.enabled"], "true");
+    assert.equal(spanAttributes["langfuse.trace.metadata.nested"], undefined);
+  } finally {
+    await shutdown();
+  }
 });
 
 test("transport: flush and shutdown do not throw when not initialized", async () => {

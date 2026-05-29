@@ -58,6 +58,7 @@ export async function initTransport(config: LangfuseConfig): Promise<void> {
       baseUrl: config.host,
     });
     provider = new NodeTracerProvider({ spanProcessors: [processor] });
+    provider.register();
     setLangfuseTracerProvider(provider);
     transportKey = nextKey;
     logDebug(config, `transport initialized for ${config.host}`);
@@ -326,5 +327,6 @@ export async function shutdown(): Promise<void> {
     processor = null;
     transportKey = null;
     setLangfuseTracerProvider(null);
+    context.disable();
   }
 }
