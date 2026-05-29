@@ -55,19 +55,19 @@ Configuration files are namespaced under:
 The extension exposes a namespaced Pi command:
 
 ```text
-/lifanh-langfuse-status
+/langfuse-status
 ```
 
 Persist configuration from Pi with:
 
 ```text
-/lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... host=https://cloud.langfuse.com
+/langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... host=https://cloud.langfuse.com
 ```
 
 Optional capture flags can be saved with the same command:
 
 ```text
-/lifanh-langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... captureInputs=true captureOutputs=true captureToolIo=true captureSystemPrompt=true debug=true
+/langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... captureInputs=true captureOutputs=true captureToolIo=true captureSystemPrompt=true debug=true
 ```
 
 ## Architecture
