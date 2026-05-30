@@ -1,9 +1,7 @@
-import { context, trace } from "@opentelemetry/api";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import {
   startObservation,
-  propagateAttributes,
   setLangfuseTracerProvider,
   type LangfuseAgent,
   type LangfuseGeneration,
@@ -58,7 +56,6 @@ export async function initTransport(config: LangfuseConfig): Promise<void> {
       baseUrl: config.host,
     });
     provider = new NodeTracerProvider({ spanProcessors: [processor] });
-    provider.register();
     setLangfuseTracerProvider(provider);
     transportKey = nextKey;
     logDebug(config, `transport initialized for ${config.host}`);
@@ -142,23 +139,19 @@ export function setTraceAttributes(
     return;
   }
   try {
-    const params: Parameters<typeof propagateAttributes>[0] = {
-      traceName: attrs.traceName,
-    };
+    agentSpan.otelSpan.setAttribute("langfuse.trace.name", attrs.traceName);
     if (attrs.tags) {
-      params.tags = attrs.tags;
+      agentSpan.otelSpan.setAttribute("langfuse.trace.tags", attrs.tags);
     }
     if (attrs.sessionId) {
-      params.sessionId = attrs.sessionId;
+      agentSpan.otelSpan.setAttribute("session.id", attrs.sessionId);
     }
     const metadata = coerceMetadataToStrings(attrs.metadata);
     if (metadata) {
-      params.metadata = metadata;
+      for (const [key, value] of Object.entries(metadata)) {
+        agentSpan.otelSpan.setAttribute(`langfuse.trace.metadata.${key}`, value);
+      }
     }
-    context.with(trace.setSpan(context.active(), agentSpan.otelSpan), () =>
-      propagateAttributes(params, () => {
-      }),
-    );
   } catch {
     // Langfuse failures must not break Pi agent
   }
@@ -327,6 +320,5 @@ export async function shutdown(): Promise<void> {
     processor = null;
     transportKey = null;
     setLangfuseTracerProvider(null);
-    context.disable();
   }
 }

@@ -10,6 +10,8 @@ import {
   setLangfuseTracerProvider,
 } from "@langfuse/tracing";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
+import { context, createContextKey, ROOT_CONTEXT } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import type { Attributes } from "@opentelemetry/api";
 
 interface TestInfra {
@@ -173,7 +175,7 @@ test("transport: error tool spans set ERROR level", async () => {
   setLangfuseTracerProvider(null);
 });
 
-test("transport: init registers OTel context so trace attributes propagate", async () => {
+test("transport: init sets trace attributes without global context registration", async () => {
   const {
     createAgentSpan,
     initTransport,
@@ -220,6 +222,32 @@ test("transport: init registers OTel context so trace attributes propagate", asy
     assert.equal(spanAttributes["langfuse.trace.metadata.nested"], undefined);
   } finally {
     await shutdown();
+  }
+});
+
+test("transport: shutdown preserves pre-existing OTel context manager", async () => {
+  const testKey = createContextKey("transport-pre-existing-context");
+  const existingContextManager = new AsyncLocalStorageContextManager().enable();
+  assert.equal(context.setGlobalContextManager(existingContextManager), true);
+
+  const { initTransport, shutdown } = await import("../src/transport.js");
+  const { createCapturePolicy } = await import("../src/capture-policy.js");
+
+  try {
+    await initTransport({
+      publicKey: "pk-lf-test",
+      secretKey: "sk-lf-test",
+      host: "http://127.0.0.1:9",
+      capturePolicy: createCapturePolicy({}),
+    });
+    await shutdown();
+
+    context.with(ROOT_CONTEXT.setValue(testKey, "host-context"), () => {
+      assert.equal(context.active().getValue(testKey), "host-context");
+    });
+  } finally {
+    await shutdown();
+    context.disable();
   }
 });
 
