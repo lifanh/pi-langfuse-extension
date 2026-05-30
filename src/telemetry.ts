@@ -55,9 +55,14 @@ export interface UsageLike {
   } | undefined;
 }
 
+export type PiContentItem =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking?: string }
+  | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+
 export interface AssistantMessageLike {
   role?: string | undefined;
-  content?: unknown;
+  content?: PiContentItem[] | string | null | unknown;
   api?: string | undefined;
   provider?: string | undefined;
   model?: string | undefined;
@@ -166,6 +171,64 @@ export function buildToolPayload(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Convert Pi's normalized message content (which uses Pi's internal ToolCall type)
+ * into a wire format that Langfuse's formatted view can parse and correlate tool calls.
+ *
+ * - `anthropic-messages` → Anthropic content array with `tool_use` blocks
+ * - all other APIs       → OpenAI chat message object with `tool_calls` array
+ *
+ * Non-array values (string, null, undefined) pass through unchanged so that
+ * raw provider payloads or already-formatted strings are not double-encoded.
+ */
+export function normalizeContentForLangfuse(content: unknown, api: string | undefined): unknown {
+  if (content === undefined || content === null || !Array.isArray(content)) {
+    return content;
+  }
+
+  const items = content as PiContentItem[];
+  const toolCallItems = items.filter((item) => item.type === "toolCall");
+  const textParts = items
+    .filter((item): item is { type: "text"; text: string } => item.type === "text")
+    .map((item) => item.text)
+    .join("");
+  const text = textParts.length > 0 ? textParts : null;
+
+  if (toolCallItems.length === 0) {
+    // Text/thinking only — just return the concatenated text (or null)
+    return text;
+  }
+
+  if (api === "anthropic-messages") {
+    const blocks: unknown[] = [];
+    if (text !== null) {
+      blocks.push({ type: "text", text });
+    }
+    for (const tc of toolCallItems) {
+      const t = tc as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+      blocks.push({ type: "tool_use", id: t.id, name: t.name, input: t.arguments });
+    }
+    return blocks;
+  }
+
+  // OpenAI chat format — default for all other APIs (openai-*, google-*, bedrock-*, etc.)
+  return {
+    role: "assistant",
+    content: text,
+    tool_calls: toolCallItems.map((tc) => {
+      const t = tc as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+      return {
+        id: t.id,
+        type: "function",
+        function: {
+          name: t.name,
+          arguments: typeof t.arguments === "string" ? t.arguments : JSON.stringify(t.arguments),
+        },
+      };
+    }),
+  };
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -281,7 +344,7 @@ export function buildGenerationPayload(
   const captured = applyCapturePolicy(
     {
       input: request?.payload,
-      output: message?.content,
+      output: normalizeContentForLangfuse(message?.content, message?.api),
       metadata,
     },
     config?.capturePolicy,
