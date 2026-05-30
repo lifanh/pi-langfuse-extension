@@ -20,12 +20,22 @@ import type { GenerationPayload } from "./telemetry.js";
 let provider: NodeTracerProvider | null = null;
 let processor: LangfuseSpanProcessor | null = null;
 let transportKey: string | null = null;
+let lastError: { scope: string; message: string; timestamp: Date } | null = null;
 
 const LOG_PREFIX = "[@lifanh/pi-langfuse-extension]";
 
 function logError(scope: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
+  lastError = { scope, message, timestamp: new Date() };
   console.error(`${LOG_PREFIX} ${scope}:`, message);
+}
+
+export function getLastError(): { scope: string; message: string; timestamp: Date } | null {
+  return lastError;
+}
+
+export function clearLastError(): void {
+  lastError = null;
 }
 
 function logDebug(config: LangfuseConfig, message: string): void {
@@ -60,6 +70,7 @@ export async function initTransport(config: LangfuseConfig): Promise<void> {
     provider = new NodeTracerProvider({ spanProcessors: [processor] });
     setLangfuseTracerProvider(provider);
     transportKey = nextKey;
+    clearLastError();
     logDebug(config, `transport initialized for ${config.host}`);
   } catch (err) {
     logError("transport init failed", err);
@@ -158,8 +169,8 @@ export function setTraceAttributes(
       propagateAttributes(params, () => {
       }),
     );
-  } catch {
-    // Langfuse failures must not break Pi agent
+  } catch (err) {
+    logError("setTraceAttributes failed", err);
   }
 }
 
@@ -249,8 +260,8 @@ export function endGenerationSpan(
     }
     generationSpan.update(attrs);
     generationSpan.end();
-  } catch {
-    // Langfuse failures must not break Pi agent
+  } catch (err) {
+    logError("endGenerationSpan failed", err);
   }
 }
 
@@ -277,8 +288,8 @@ export function endToolSpan(
     }
     toolSpan.update(attrs);
     toolSpan.end();
-  } catch {
-    // Langfuse failures must not break Pi agent
+  } catch (err) {
+    logError("endToolSpan failed", err);
   }
 }
 
@@ -294,8 +305,8 @@ export function endAgentSpan(
       agentSpan.update({ output });
     }
     agentSpan.end();
-  } catch {
-    // Langfuse failures must not break Pi agent
+  } catch (err) {
+    logError("endAgentSpan failed", err);
   }
 }
 
@@ -305,8 +316,8 @@ export async function flush(): Promise<void> {
   }
   try {
     await processor.forceFlush();
-  } catch {
-    // Langfuse failures must not break Pi agent
+  } catch (err) {
+    logError("flush failed", err);
   }
 }
 
@@ -319,8 +330,8 @@ export async function shutdown(): Promise<void> {
       await processor.forceFlush();
     }
     await provider.shutdown();
-  } catch {
-    // Langfuse failures must not break Pi agent
+  } catch (err) {
+    logError("shutdown failed", err);
   } finally {
     provider = null;
     processor = null;
