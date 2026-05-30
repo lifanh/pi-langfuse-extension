@@ -225,6 +225,115 @@ test("transport: init sets trace attributes without global context registration"
   }
 });
 
+test("transport: child spans inherit trace attributes from agent span", async () => {
+  const {
+    createAgentSpan,
+    createGenerationSpan,
+    createToolSpan,
+    initTransport,
+    setTraceAttributes,
+    shutdown,
+  } = await import("../src/transport.js");
+  const { createCapturePolicy } = await import("../src/capture-policy.js");
+
+  await initTransport({
+    publicKey: "pk-lf-test",
+    secretKey: "sk-lf-test",
+    host: "http://127.0.0.1:9",
+    capturePolicy: createCapturePolicy({}),
+  });
+
+  try {
+    const root = createAgentSpan("pi-agent-run", { metadata: undefined });
+    assert.ok(root);
+
+    setTraceAttributes(root, {
+      traceName: "pi-agent-run",
+      tags: ["pi-coding-agent"],
+      sessionId: "session-123",
+      metadata: { agent: "pi" },
+    });
+
+    const tool = createToolSpan(root, "tool:shell", { metadata: undefined });
+    const generation = createGenerationSpan(root, "generation:0", {
+      metadata: undefined,
+      model: undefined,
+      modelParameters: undefined,
+      usageDetails: undefined,
+      costDetails: undefined,
+      statusMessage: undefined,
+      isError: false,
+    });
+
+    assert.ok(tool);
+    assert.ok(generation);
+
+    for (const child of [tool, generation]) {
+      const spanAttributes = (
+        child.otelSpan as unknown as { attributes: Attributes }
+      ).attributes;
+      assert.equal(spanAttributes["langfuse.trace.name"], "pi-agent-run");
+      assert.deepEqual(spanAttributes["langfuse.trace.tags"], [
+        "pi-coding-agent",
+      ]);
+      assert.equal(spanAttributes["session.id"], "session-123");
+      assert.equal(spanAttributes["langfuse.trace.metadata.agent"], "pi");
+    }
+  } finally {
+    await shutdown();
+  }
+});
+
+test("transport: trace attributes follow Langfuse propagated string limits", async () => {
+  const {
+    createAgentSpan,
+    createToolSpan,
+    initTransport,
+    setTraceAttributes,
+    shutdown,
+  } = await import("../src/transport.js");
+  const { createCapturePolicy } = await import("../src/capture-policy.js");
+
+  await initTransport({
+    publicKey: "pk-lf-test",
+    secretKey: "sk-lf-test",
+    host: "http://127.0.0.1:9",
+    capturePolicy: createCapturePolicy({}),
+  });
+
+  try {
+    const root = createAgentSpan("pi-agent-run", { metadata: undefined });
+    assert.ok(root);
+
+    setTraceAttributes(root, {
+      traceName: "x".repeat(201),
+      tags: ["kept", "x".repeat(201)],
+      sessionId: "x".repeat(201),
+      metadata: { kept: "ok", dropped: "x".repeat(201) },
+    });
+
+    const tool = createToolSpan(root, "tool:shell", { metadata: undefined });
+    assert.ok(tool);
+
+    const rootAttributes = (
+      root.otelSpan as unknown as { attributes: Attributes }
+    ).attributes;
+    const toolAttributes = (
+      tool.otelSpan as unknown as { attributes: Attributes }
+    ).attributes;
+
+    for (const spanAttributes of [rootAttributes, toolAttributes]) {
+      assert.equal(spanAttributes["langfuse.trace.name"], undefined);
+      assert.deepEqual(spanAttributes["langfuse.trace.tags"], ["kept"]);
+      assert.equal(spanAttributes["session.id"], undefined);
+      assert.equal(spanAttributes["langfuse.trace.metadata.kept"], "ok");
+      assert.equal(spanAttributes["langfuse.trace.metadata.dropped"], undefined);
+    }
+  } finally {
+    await shutdown();
+  }
+});
+
 test("transport: shutdown preserves pre-existing OTel context manager", async () => {
   const testKey = createContextKey("transport-pre-existing-context");
   const existingContextManager = new AsyncLocalStorageContextManager().enable();
