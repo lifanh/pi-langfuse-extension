@@ -1,6 +1,6 @@
 {
   "name": "@lifanh/pi-langfuse-extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Privacy-first Langfuse observability extension for Pi Coding Agent",
   "type": "module",
   "packageManager": "npm@11.7.0",
