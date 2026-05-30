@@ -1,9 +1,7 @@
-import { context, trace } from "@opentelemetry/api";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import {
   startObservation,
-  propagateAttributes,
   setLangfuseTracerProvider,
   type LangfuseAgent,
   type LangfuseGeneration,
@@ -21,8 +19,13 @@ let provider: NodeTracerProvider | null = null;
 let processor: LangfuseSpanProcessor | null = null;
 let transportKey: string | null = null;
 let lastError: { scope: string; message: string; timestamp: Date } | null = null;
+let traceAttributesByAgentSpan = new WeakMap<
+  LangfuseAgent,
+  Record<string, string | string[]>
+>();
 
 const LOG_PREFIX = "[@lifanh/pi-langfuse-extension]";
+const MAX_PROPAGATED_STRING_LENGTH = 200;
 
 function logError(scope: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
@@ -144,6 +147,54 @@ function coerceMetadataToStrings(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function isValidPropagatedString(value: string): boolean {
+  return value.length <= MAX_PROPAGATED_STRING_LENGTH;
+}
+
+function buildTraceSpanAttributes(
+  attrs: TraceAttributes,
+): Record<string, string | string[]> {
+  const spanAttributes: Record<string, string | string[]> = {};
+  if (isValidPropagatedString(attrs.traceName)) {
+    spanAttributes["langfuse.trace.name"] = attrs.traceName;
+  }
+  const tags = attrs.tags?.filter(isValidPropagatedString);
+  if (tags && tags.length > 0) {
+    spanAttributes["langfuse.trace.tags"] = tags;
+  }
+  if (attrs.sessionId && isValidPropagatedString(attrs.sessionId)) {
+    spanAttributes["session.id"] = attrs.sessionId;
+  }
+  const metadata = coerceMetadataToStrings(attrs.metadata);
+  if (metadata) {
+    for (const [key, value] of Object.entries(metadata)) {
+      if (isValidPropagatedString(value)) {
+        spanAttributes[`langfuse.trace.metadata.${key}`] = value;
+      }
+    }
+  }
+  return spanAttributes;
+}
+
+function setSpanAttributes(
+  observation: LangfuseAgent | LangfuseGeneration | LangfuseTool,
+  attrs: Record<string, string | string[]>,
+): void {
+  for (const [key, value] of Object.entries(attrs)) {
+    observation.otelSpan.setAttribute(key, value);
+  }
+}
+
+function inheritTraceAttributes(
+  agentSpan: LangfuseAgent,
+  childSpan: LangfuseGeneration | LangfuseTool,
+): void {
+  const traceAttributes = traceAttributesByAgentSpan.get(agentSpan);
+  if (traceAttributes) {
+    setSpanAttributes(childSpan, traceAttributes);
+  }
+}
+
 export function setTraceAttributes(
   agentSpan: LangfuseAgent | null,
   attrs: TraceAttributes,
@@ -152,23 +203,9 @@ export function setTraceAttributes(
     return;
   }
   try {
-    const params: Parameters<typeof propagateAttributes>[0] = {
-      traceName: attrs.traceName,
-    };
-    if (attrs.tags) {
-      params.tags = attrs.tags;
-    }
-    if (attrs.sessionId) {
-      params.sessionId = attrs.sessionId;
-    }
-    const metadata = coerceMetadataToStrings(attrs.metadata);
-    if (metadata) {
-      params.metadata = metadata;
-    }
-    context.with(trace.setSpan(context.active(), agentSpan.otelSpan), () =>
-      propagateAttributes(params, () => {
-      }),
-    );
+    const traceAttributes = buildTraceSpanAttributes(attrs);
+    traceAttributesByAgentSpan.set(agentSpan, traceAttributes);
+    setSpanAttributes(agentSpan, traceAttributes);
   } catch (err) {
     logError("setTraceAttributes failed", err);
   }
@@ -190,7 +227,11 @@ export function createToolSpan(
     if (payload.metadata !== undefined) {
       attributes.metadata = payload.metadata;
     }
-    return agentSpan.startObservation(name, attributes, { asType: "tool" });
+    const toolSpan = agentSpan.startObservation(name, attributes, {
+      asType: "tool",
+    });
+    inheritTraceAttributes(agentSpan, toolSpan);
+    return toolSpan;
   } catch (err) {
     logError("createToolSpan failed", err);
     return null;
@@ -219,7 +260,11 @@ export function createGenerationSpan(
     if (payload.modelParameters !== undefined) {
       attributes.modelParameters = payload.modelParameters;
     }
-    return agentSpan.startObservation(name, attributes, { asType: "generation" });
+    const generationSpan = agentSpan.startObservation(name, attributes, {
+      asType: "generation",
+    });
+    inheritTraceAttributes(agentSpan, generationSpan);
+    return generationSpan;
   } catch (err) {
     logError("createGenerationSpan failed", err);
     return null;
@@ -336,6 +381,7 @@ export async function shutdown(): Promise<void> {
     provider = null;
     processor = null;
     transportKey = null;
+    traceAttributesByAgentSpan = new WeakMap();
     setLangfuseTracerProvider(null);
   }
 }
