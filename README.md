@@ -95,6 +95,8 @@ Optional capture flags can be saved with the same command:
 | `/langfuse-privacy preset=minimal` | Apply a named preset: `minimal`, `strict` (alias), `prompts-only`, `conversations`, or `full-debug`. |
 | `/langfuse-reset` | Delete the saved config file after confirmation. Environment variables still work. |
 
+Commands validate their arguments before changing configuration. If a command receives a malformed option such as `captureInputs` instead of `captureInputs=true`, an unknown option such as `capturePrompts=true`, or an invalid boolean such as `captureInputs=yes`, Pi shows a warning with the accepted usage and an example command.
+
 When the extension is loaded but unconfigured, Pi shows a one-time onboarding hint. During agent runs with tracing configured, the footer displays `◉ langfuse` and clears it when the run ends or the session shuts down.
 
 ## What gets sent by default?

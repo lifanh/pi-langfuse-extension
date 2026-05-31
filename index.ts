@@ -138,16 +138,36 @@ function notify(
   }
 }
 
-function parseConfigureArgs(args: string): Record<string, string> {
-  const out: Record<string, string> = {};
+interface ParsedCommandArgs {
+  values: Record<string, string>;
+  malformed: string[];
+}
+
+const COMMAND_USAGE = {
+  status: "Usage: /langfuse-status",
+  configure:
+    "Usage: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true|false] [captureOutputs=true|false] [captureToolIo=true|false] [captureSystemPrompt=true|false] [captureCwd=true|false] [debug=true|false]",
+  test: "Usage: /langfuse-test",
+  reset: "Usage: /langfuse-reset",
+  privacy:
+    "Usage: /langfuse-privacy [captureInputs=true|false] [all=false] [preset=minimal|strict|prompts-only|conversations|full-debug]",
+} as const;
+
+function parseCommandArgs(args: string): ParsedCommandArgs {
+  const values: Record<string, string> = {};
+  const malformed: string[] = [];
   for (const part of args.trim().split(/\s+/)) {
-    const eq = part.indexOf("=");
-    if (eq <= 0) {
+    if (!part) {
       continue;
     }
-    out[part.slice(0, eq)] = part.slice(eq + 1);
+    const eq = part.indexOf("=");
+    if (eq <= 0) {
+      malformed.push(part);
+      continue;
+    }
+    values[part.slice(0, eq)] = part.slice(eq + 1);
   }
-  return out;
+  return { values, malformed };
 }
 
 const EXTENSION_NAME = "@lifanh/pi-langfuse-extension";
@@ -169,6 +189,10 @@ const CAPTURE_ARG_TO_ENV: Array<[CaptureArgName, string]> = [
   ["captureCwd", "LANGFUSE_CAPTURE_CWD"],
   ["debug", "LANGFUSE_DEBUG"],
 ];
+
+const CAPTURE_ARG_NAMES = CAPTURE_ARG_TO_ENV.map(([argName]) => argName);
+const CONFIGURE_ARG_NAMES = ["publicKey", "secretKey", "host", ...CAPTURE_ARG_NAMES];
+const PRIVACY_ARG_NAMES = [...CAPTURE_ARG_NAMES, "all", "preset"];
 
 const MINIMAL_METADATA_CAPTURE: Record<string, string> = {
   LANGFUSE_CAPTURE_INPUTS: "false",
@@ -212,6 +236,96 @@ function captureArgs(args: Record<string, string>): Record<string, string | unde
     }
   }
   return capture;
+}
+
+function rejectNoArgCommandArgs(
+  args: string,
+  ctx: ExtensionCommandContext,
+  usage: string,
+): boolean {
+  const parsed = parseCommandArgs(args);
+  const unexpected = parsed.malformed[0] ?? Object.keys(parsed.values)[0];
+  if (!unexpected) {
+    return false;
+  }
+  const command = usage.match(/^Usage: (\/\S+)/)?.[1] ?? "this command";
+  notify(
+    ctx,
+    [
+      `Unexpected argument '${unexpected}'. This command does not take options.`,
+      usage,
+      `Run ${command} without arguments.`,
+    ].join("\n"),
+    "warning",
+  );
+  return true;
+}
+
+function rejectMalformedArgs(
+  parsed: ParsedCommandArgs,
+  ctx: ExtensionCommandContext,
+  example: string,
+  usage: string,
+): boolean {
+  const malformed = parsed.malformed[0];
+  if (!malformed) {
+    return false;
+  }
+  notify(
+    ctx,
+    [`Couldn't understand '${malformed}'. Use key=value, for example ${example}.`, usage].join(
+      "\n",
+    ),
+    "warning",
+  );
+  return true;
+}
+
+function rejectUnknownArgs(
+  parsed: ParsedCommandArgs,
+  ctx: ExtensionCommandContext,
+  allowed: readonly string[],
+  noun: string,
+  usage: string,
+  example?: string,
+): boolean {
+  const unknown = Object.keys(parsed.values).find((key) => !allowed.includes(key));
+  if (!unknown) {
+    return false;
+  }
+  const lines = [`Unknown ${noun} '${unknown}'. Allowed settings: ${allowed.join(", ")}.`, usage];
+  if (example) {
+    lines.push(`Example: ${example}`);
+  }
+  notify(
+    ctx,
+    lines.join("\n"),
+    "warning",
+  );
+  return true;
+}
+
+function rejectInvalidBooleans(
+  parsed: Record<string, string>,
+  ctx: ExtensionCommandContext,
+  names: readonly string[],
+  usage: string,
+): boolean {
+  for (const name of names) {
+    const value = parsed[name];
+    if (value === undefined || value === "true" || value === "false") {
+      continue;
+    }
+    notify(
+      ctx,
+      [`Invalid value for ${name}='${value}'. Use ${name}=true or ${name}=false.`, usage].join(
+        "\n",
+      ),
+      "warning",
+    );
+    return true;
+  }
+  return false;
 }
 
 function capturePolicyToPersisted(config: LangfuseConfig | null): Record<string, string> {
@@ -407,7 +521,10 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
 
   pi.registerCommand("langfuse-status", {
     description: "Show @lifanh/pi-langfuse-extension configuration status",
-    handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      if (rejectNoArgCommandArgs(args, ctx, COMMAND_USAGE.status)) {
+        return;
+      }
       config = loadConfig();
       notify(ctx, formatStatus(config), config ? "info" : "warning");
     },
@@ -417,7 +534,34 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     description:
       "Persist Langfuse config. Usage: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true]",
     handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-      const parsed = parseConfigureArgs(args);
+      const commandArgs = parseCommandArgs(args);
+      if (
+        rejectMalformedArgs(commandArgs, ctx, "publicKey=pk-lf-...", COMMAND_USAGE.configure) ||
+        rejectUnknownArgs(
+          commandArgs,
+          ctx,
+          CONFIGURE_ARG_NAMES,
+          "setting",
+          COMMAND_USAGE.configure,
+          "/langfuse-configure captureInputs=true",
+        ) ||
+        rejectInvalidBooleans(commandArgs.values, ctx, CAPTURE_ARG_NAMES, COMMAND_USAGE.configure)
+      ) {
+        return;
+      }
+      const parsed = commandArgs.values;
+      if (Object.keys(parsed).length === 0) {
+        notify(
+          ctx,
+          [
+            "No settings provided.",
+            COMMAND_USAGE.configure,
+            "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
+          ].join("\n"),
+          "warning",
+        );
+        return;
+      }
       const existingFile = loadConfigFromFile();
       const publicKey = parsed["publicKey"] ?? existingFile?.publicKey;
       const secretKey = parsed["secretKey"] ?? existingFile?.secretKey;
@@ -425,7 +569,11 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       if (!publicKey || !secretKey) {
         notify(
           ctx,
-          "No saved config found. Provide publicKey=... secretKey=... or set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.",
+          [
+            "No saved config found. Provide publicKey=... secretKey=... or set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.",
+            COMMAND_USAGE.configure,
+            "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
+          ].join("\n"),
           "warning",
         );
         return;
@@ -452,10 +600,20 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
 
   pi.registerCommand("langfuse-test", {
     description: "Test Langfuse connectivity with current config",
-    handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      if (rejectNoArgCommandArgs(args, ctx, COMMAND_USAGE.test)) {
+        return;
+      }
       config = loadConfig();
       if (!config) {
-        notify(ctx, "Not configured. Run /langfuse-configure first.", "warning");
+        notify(
+          ctx,
+          [
+            "Not configured. Run /langfuse-configure first.",
+            "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
+          ].join("\n"),
+          "warning",
+        );
         return;
       }
       const result = await testConnectivity(config);
@@ -465,7 +623,10 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
 
   pi.registerCommand("langfuse-reset", {
     description: "Remove saved Langfuse configuration",
-    handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      if (rejectNoArgCommandArgs(args, ctx, COMMAND_USAGE.reset)) {
+        return;
+      }
       const configPath = configPathForHome();
       if (!existsSync(configPath)) {
         notify(ctx, "No saved config to reset.", "info");
@@ -493,13 +654,40 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     description:
       "Show or update Langfuse privacy flags. Usage: /langfuse-privacy [captureInputs=true] [all=false] [preset=minimal]",
     handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-      const parsed = parseConfigureArgs(args);
+      const commandArgs = parseCommandArgs(args);
+      if (
+        rejectMalformedArgs(commandArgs, ctx, "captureInputs=true", COMMAND_USAGE.privacy) ||
+        rejectUnknownArgs(
+          commandArgs,
+          ctx,
+          PRIVACY_ARG_NAMES,
+          "privacy setting",
+          COMMAND_USAGE.privacy,
+          "/langfuse-privacy captureInputs=true",
+        ) ||
+        rejectInvalidBooleans(
+          commandArgs.values,
+          ctx,
+          [...CAPTURE_ARG_NAMES, "all"],
+          COMMAND_USAGE.privacy,
+        )
+      ) {
+        return;
+      }
+      const parsed = commandArgs.values;
       const existingFile = loadConfigFromFile();
       const current = loadConfig();
 
       if (Object.keys(parsed).length === 0) {
         if (!current) {
-          notify(ctx, "Not configured. Run /langfuse-configure first.", "warning");
+          notify(
+            ctx,
+            [
+              "Not configured. Run /langfuse-configure first.",
+              "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
+            ].join("\n"),
+            "warning",
+          );
           return;
         }
         notify(
@@ -522,7 +710,10 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       if (!publicKey || !secretKey) {
         notify(
           ctx,
-          "No saved config file found. Run /langfuse-configure before changing saved privacy flags.",
+          [
+            "No saved config file found. Run /langfuse-configure before changing saved privacy flags.",
+            "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
+          ].join("\n"),
           "warning",
         );
         return;
@@ -534,7 +725,11 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
         if (!preset) {
           notify(
             ctx,
-            `Unknown preset '${parsed["preset"]}'. Choose one of: ${Object.keys(PRIVACY_PRESETS).join(", ")}.`,
+            [
+              `Unknown preset '${parsed["preset"]}'. Choose one of: ${Object.keys(PRIVACY_PRESETS).join(", ")}.`,
+              "Example: /langfuse-privacy preset=conversations",
+              COMMAND_USAGE.privacy,
+            ].join("\n"),
             "warning",
           );
           return;
@@ -542,14 +737,6 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
         updates = { ...updates, ...preset };
       }
       if (parsed["all"] !== undefined) {
-        if (parsed["all"] !== "true" && parsed["all"] !== "false") {
-          notify(
-            ctx,
-            `Invalid value for all='${parsed["all"]}'. Use all=true or all=false.`,
-            "warning",
-          );
-          return;
-        }
         for (const [, envName] of CAPTURE_ARG_TO_ENV) {
           if (envName !== "LANGFUSE_DEBUG") {
             updates[envName] = parsed["all"];
@@ -561,7 +748,10 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       if (Object.keys(updates).length === 0) {
         notify(
           ctx,
-          "No privacy flags provided. Use captureInputs=true, all=false, or preset=minimal.",
+          [
+            "No privacy flags provided. Use captureInputs=true, all=false, or preset=minimal.",
+            COMMAND_USAGE.privacy,
+          ].join("\n"),
           "warning",
         );
         return;
