@@ -58,7 +58,7 @@ export interface UsageLike {
 export type PiContentItem =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking?: string }
-  | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+  | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> | string };
 
 export interface AssistantMessageLike {
   role?: string | undefined;
@@ -173,6 +173,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isPiContentItem(value: unknown): value is PiContentItem {
+  if (!isRecord(value) || typeof value["type"] !== "string") {
+    return false;
+  }
+
+  if (value["type"] === "text") {
+    return typeof value["text"] === "string";
+  }
+
+  if (value["type"] === "thinking") {
+    return value["thinking"] === undefined || typeof value["thinking"] === "string";
+  }
+
+  if (value["type"] === "toolCall") {
+    return (
+      typeof value["id"] === "string" &&
+      typeof value["name"] === "string" &&
+      (isRecord(value["arguments"]) || typeof value["arguments"] === "string")
+    );
+  }
+
+  return false;
+}
+
 /**
  * Convert Pi's normalized message content (which uses Pi's internal ToolCall type)
  * into a wire format that Langfuse's formatted view can parse and correlate tool calls.
@@ -180,15 +204,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * - `anthropic-messages` → Anthropic content array with `tool_use` blocks
  * - all other APIs       → OpenAI chat message object with `tool_calls` array
  *
- * Non-array values (string, null, undefined) pass through unchanged so that
- * raw provider payloads or already-formatted strings are not double-encoded.
+ * Non-Pi values pass through unchanged so that raw provider payloads,
+ * provider-native arrays, or already-formatted strings are not double-encoded.
  */
 export function normalizeContentForLangfuse(content: unknown, api: string | undefined): unknown {
   if (content === undefined || content === null || !Array.isArray(content)) {
     return content;
   }
 
-  const items = content as PiContentItem[];
+  if (!content.every(isPiContentItem)) {
+    return content;
+  }
+
+  const items = content;
   const toolCallItems = items.filter((item) => item.type === "toolCall");
   const textParts = items
     .filter((item): item is { type: "text"; text: string } => item.type === "text")
@@ -207,7 +235,7 @@ export function normalizeContentForLangfuse(content: unknown, api: string | unde
       blocks.push({ type: "text", text });
     }
     for (const tc of toolCallItems) {
-      const t = tc as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+      const t = tc as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> | string };
       blocks.push({ type: "tool_use", id: t.id, name: t.name, input: t.arguments });
     }
     return blocks;
@@ -218,7 +246,7 @@ export function normalizeContentForLangfuse(content: unknown, api: string | unde
     role: "assistant",
     content: text,
     tool_calls: toolCallItems.map((tc) => {
-      const t = tc as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
+      const t = tc as { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> | string };
       return {
         id: t.id,
         type: "function",

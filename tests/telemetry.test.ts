@@ -284,6 +284,15 @@ test("normalizeContentForLangfuse: mixed text+tool calls → Anthropic format pr
   assert.equal(toolUse["name"], "read");
 });
 
+test("normalizeContentForLangfuse: provider-native arrays pass through unchanged", () => {
+  const content = [
+    { type: "text", text: "Let me check that." },
+    { type: "tool_use", id: "toolu_03", name: "read", input: { path: "README.md" } },
+  ];
+
+  assert.strictEqual(normalizeContentForLangfuse(content, "anthropic-messages"), content);
+});
+
 test("buildGenerationPayload: tool calls in output are normalized to OpenAI format when captureOutputs enabled", () => {
   const config = {
     ...configWithDefaults(),
