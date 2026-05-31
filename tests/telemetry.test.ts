@@ -5,6 +5,7 @@ import {
   buildGenerationPayload,
   buildRunPayload,
   resolveSessionId,
+  normalizeContentForLangfuse,
 } from "../src/telemetry.js";
 import { createCapturePolicy } from "../src/capture-policy.js";
 import type { LangfuseConfig } from "../src/config.js";
@@ -180,4 +181,166 @@ test("buildRunPayload preserves system prompt when enabled", () => {
   );
 
   assert.equal(result.systemPrompt, "system token [REDACTED_SECRET]");
+});
+
+// --- normalizeContentForLangfuse ---
+
+test("normalizeContentForLangfuse: returns undefined for undefined content", () => {
+  assert.equal(normalizeContentForLangfuse(undefined, undefined), undefined);
+});
+
+test("normalizeContentForLangfuse: passes string content through unchanged", () => {
+  assert.equal(normalizeContentForLangfuse("hello world", "openai-completions"), "hello world");
+});
+
+test("normalizeContentForLangfuse: passes null through unchanged", () => {
+  assert.equal(normalizeContentForLangfuse(null, "anthropic-messages"), null);
+});
+
+test("normalizeContentForLangfuse: text-only Pi content array becomes plain string", () => {
+  const content = [
+    { type: "text", text: "Hello " },
+    { type: "text", text: "world" },
+  ];
+  assert.equal(normalizeContentForLangfuse(content, "openai-completions"), "Hello world");
+});
+
+test("normalizeContentForLangfuse: thinking-only content array becomes null (no text)", () => {
+  const content = [{ type: "thinking", thinking: "some internal thought" }];
+  assert.equal(normalizeContentForLangfuse(content, "anthropic-messages"), null);
+});
+
+test("normalizeContentForLangfuse: tool calls with no text → OpenAI format for openai-completions", () => {
+  const content = [
+    { type: "toolCall", id: "call_abc", name: "read", arguments: { path: "/foo/bar.ts" } },
+    { type: "toolCall", id: "call_def", name: "bash", arguments: { command: "ls" } },
+  ];
+  const result = normalizeContentForLangfuse(content, "openai-completions") as Record<string, unknown>;
+  assert.equal(result["role"], "assistant");
+  assert.equal(result["content"], null);
+  const toolCalls = result["tool_calls"] as { id: string; type: string; function: { name: string; arguments: string } }[];
+  assert.equal(toolCalls.length, 2);
+  assert.equal(toolCalls[0]!.id, "call_abc");
+  assert.equal(toolCalls[0]!.type, "function");
+  assert.equal(toolCalls[0]!.function.name, "read");
+  assert.equal(toolCalls[0]!.function.arguments, JSON.stringify({ path: "/foo/bar.ts" }));
+  assert.equal(toolCalls[1]!.function.name, "bash");
+});
+
+test("normalizeContentForLangfuse: tool calls → OpenAI format for openai-responses", () => {
+  const content = [
+    { type: "toolCall", id: "tc_1", name: "edit", arguments: { file: "a.ts" } },
+  ];
+  const result = normalizeContentForLangfuse(content, "openai-responses") as Record<string, unknown>;
+  assert.ok(Array.isArray(result["tool_calls"]));
+});
+
+test("normalizeContentForLangfuse: tool calls → OpenAI format for unknown/google api", () => {
+  const content = [
+    { type: "toolCall", id: "tc_1", name: "write", arguments: { path: "x.ts", content: "data" } },
+  ];
+  const result = normalizeContentForLangfuse(content, "google-generative-ai") as Record<string, unknown>;
+  assert.ok(Array.isArray(result["tool_calls"]), "should fall back to OpenAI format");
+});
+
+test("normalizeContentForLangfuse: tool calls → Anthropic format for anthropic-messages", () => {
+  const content = [
+    { type: "toolCall", id: "toolu_01", name: "bash", arguments: { command: "pwd" } },
+  ];
+  const result = normalizeContentForLangfuse(content, "anthropic-messages") as unknown[];
+  assert.ok(Array.isArray(result));
+  const toolUse = result[0] as Record<string, unknown>;
+  assert.equal(toolUse["type"], "tool_use");
+  assert.equal(toolUse["id"], "toolu_01");
+  assert.equal(toolUse["name"], "bash");
+  assert.deepEqual(toolUse["input"], { command: "pwd" });
+});
+
+test("normalizeContentForLangfuse: mixed text+tool calls → OpenAI format preserves text", () => {
+  const content = [
+    { type: "text", text: "I'll run this for you." },
+    { type: "toolCall", id: "call_xyz", name: "bash", arguments: { command: "echo hi" } },
+  ];
+  const result = normalizeContentForLangfuse(content, "openai-completions") as Record<string, unknown>;
+  assert.equal(result["content"], "I'll run this for you.");
+  const toolCalls = result["tool_calls"] as { function: { name: string } }[];
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0]!.function.name, "bash");
+});
+
+test("normalizeContentForLangfuse: mixed text+tool calls → Anthropic format preserves both", () => {
+  const content = [
+    { type: "text", text: "Let me check that." },
+    { type: "toolCall", id: "toolu_02", name: "read", arguments: { path: "README.md" } },
+  ];
+  const result = normalizeContentForLangfuse(content, "anthropic-messages") as unknown[];
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 2);
+  const textBlock = result[0] as Record<string, unknown>;
+  const toolUse = result[1] as Record<string, unknown>;
+  assert.equal(textBlock["type"], "text");
+  assert.equal(textBlock["text"], "Let me check that.");
+  assert.equal(toolUse["type"], "tool_use");
+  assert.equal(toolUse["name"], "read");
+});
+
+test("buildGenerationPayload: tool calls in output are normalized to OpenAI format when captureOutputs enabled", () => {
+  const config = {
+    ...configWithDefaults(),
+    capturePolicy: createCapturePolicy({ LANGFUSE_CAPTURE_OUTPUTS: "true" }),
+  };
+  const result = buildGenerationPayload(
+    undefined,
+    undefined,
+    {
+      turnIndex: 1,
+      message: {
+        role: "assistant",
+        api: "openai-completions",
+        model: "gpt-4o",
+        content: [
+          { type: "toolCall", id: "call_1", name: "read", arguments: { path: "src/foo.ts" } },
+        ],
+        stopReason: "tool_calls",
+        usage: { input: 5, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 8, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      },
+    },
+    undefined,
+    config,
+  );
+  const output = result.output as Record<string, unknown>;
+  assert.ok(Array.isArray(output["tool_calls"]), "output should have tool_calls array");
+  const toolCalls = output["tool_calls"] as { function: { name: string } }[];
+  assert.equal(toolCalls[0]!.function.name, "read");
+});
+
+test("buildGenerationPayload: tool calls in output are normalized to Anthropic format when captureOutputs enabled", () => {
+  const config = {
+    ...configWithDefaults(),
+    capturePolicy: createCapturePolicy({ LANGFUSE_CAPTURE_OUTPUTS: "true" }),
+  };
+  const result = buildGenerationPayload(
+    undefined,
+    undefined,
+    {
+      turnIndex: 0,
+      message: {
+        role: "assistant",
+        api: "anthropic-messages",
+        model: "claude-opus-4-5",
+        content: [
+          { type: "toolCall", id: "toolu_99", name: "bash", arguments: { command: "ls" } },
+        ],
+        stopReason: "tool_use",
+        usage: { input: 5, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 8, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      },
+    },
+    undefined,
+    config,
+  );
+  const output = result.output as unknown[];
+  assert.ok(Array.isArray(output), "Anthropic output should be an array");
+  const toolUse = output[0] as Record<string, unknown>;
+  assert.equal(toolUse["type"], "tool_use");
+  assert.equal(toolUse["name"], "bash");
 });
