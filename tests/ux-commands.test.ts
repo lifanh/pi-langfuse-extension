@@ -58,6 +58,10 @@ function createCtx(): FakeCommandContext {
   };
 }
 
+function lastMessage(ctx: FakeCommandContext): string {
+  return ctx.ui.messages.at(-1)?.message ?? "";
+}
+
 async function withHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const oldHome = process.env.HOME;
   const oldPublic = process.env.LANGFUSE_PUBLIC_KEY;
@@ -112,6 +116,134 @@ test("langfuse-configure merges with saved config instead of requiring keys", as
     assert.equal(saved.host, "https://cloud.langfuse.com");
     assert.equal(saved.capture.LANGFUSE_CAPTURE_INPUTS, "true");
     assert.match(ctx.ui.messages.at(-1)?.message ?? "", /captureInputs=true/);
+  });
+});
+
+test("commands reject unexpected arguments with usage guidance", async () => {
+  await withHome(async () => {
+    const { commands, pi } = createPi();
+    await extension(pi);
+    const status = commands.get("langfuse-status");
+    const testCommand = commands.get("langfuse-test");
+    const reset = commands.get("langfuse-reset");
+    assert.ok(status);
+    assert.ok(testCommand);
+    assert.ok(reset);
+
+    const ctx = createCtx();
+    await status.handler("verbose=true", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Unexpected argument 'verbose'/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-status/);
+    assert.match(lastMessage(ctx), /Run \/langfuse-status without arguments/);
+
+    await testCommand.handler("now", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Unexpected argument 'now'/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-test/);
+    assert.match(lastMessage(ctx), /Run \/langfuse-test without arguments/);
+
+    await reset.handler("force=true", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Unexpected argument 'force'/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-reset/);
+    assert.match(lastMessage(ctx), /Run \/langfuse-reset without arguments/);
+  });
+});
+
+test("langfuse-configure reports malformed and unknown arguments with examples", async () => {
+  await withHome(async () => {
+    const { commands, pi } = createPi();
+    await extension(pi);
+    const configure = commands.get("langfuse-configure");
+    assert.ok(configure);
+
+    const ctx = createCtx();
+    await configure.handler("publicKey pk-lf-public secretKey=sk-lf-secret", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Couldn't understand 'publicKey'/);
+    assert.match(lastMessage(ctx), /Use key=value, for example publicKey=pk-lf-/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-configure/);
+
+    await configure.handler("publicKey=pk-lf-public secretKey=sk-lf-secret region=us", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Unknown setting 'region'/);
+    assert.match(lastMessage(ctx), /Allowed settings: publicKey, secretKey, host, captureInputs, captureOutputs, captureToolIo, captureSystemPrompt, captureCwd, debug/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-configure/);
+    assert.match(lastMessage(ctx), /debug=true/);
+    assert.match(lastMessage(ctx), /Example: \/langfuse-configure captureInputs=true/);
+  });
+});
+
+test("langfuse-configure validates boolean capture flags before saving", async () => {
+  await withHome(async (home) => {
+    const { commands, pi } = createPi();
+    await extension(pi);
+    const configure = commands.get("langfuse-configure");
+    assert.ok(configure);
+
+    const ctx = createCtx();
+    await configure.handler(
+      "publicKey=pk-lf-public secretKey=sk-lf-secret captureInputs=yes",
+      ctx,
+    );
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Invalid value for captureInputs='yes'/);
+    assert.match(lastMessage(ctx), /Use captureInputs=true or captureInputs=false/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-configure/);
+    assert.throws(() => readFileSync(configPathForHome(home), "utf8"), /ENOENT/);
+  });
+});
+
+test("langfuse-privacy reports malformed, unknown, and invalid values with guidance", async () => {
+  await withHome(async () => {
+    const { commands, pi } = createPi();
+    await extension(pi);
+    const configure = commands.get("langfuse-configure");
+    const privacy = commands.get("langfuse-privacy");
+    assert.ok(configure);
+    assert.ok(privacy);
+
+    const ctx = createCtx();
+    await configure.handler("publicKey=pk-lf-public secretKey=sk-lf-secret", ctx);
+
+    await privacy.handler("captureInputs", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Couldn't understand 'captureInputs'/);
+    assert.match(lastMessage(ctx), /Use key=value, for example captureInputs=true/);
+    assert.match(lastMessage(ctx), /Usage: \/langfuse-privacy/);
+
+    await privacy.handler("capturePrompts=true", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Unknown privacy setting 'capturePrompts'/);
+    assert.match(lastMessage(ctx), /Allowed settings: captureInputs, captureOutputs, captureToolIo, captureSystemPrompt, captureCwd, debug, all, preset/);
+    assert.match(lastMessage(ctx), /prompts-only/);
+    assert.match(lastMessage(ctx), /Example: \/langfuse-privacy captureInputs=true/);
+
+    await privacy.handler("captureOutputs=maybe", ctx);
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Invalid value for captureOutputs='maybe'/);
+    assert.match(lastMessage(ctx), /Use captureOutputs=true or captureOutputs=false/);
+  });
+});
+
+test("langfuse-privacy explains available presets when preset is invalid", async () => {
+  await withHome(async () => {
+    const { commands, pi } = createPi();
+    await extension(pi);
+    const configure = commands.get("langfuse-configure");
+    const privacy = commands.get("langfuse-privacy");
+    assert.ok(configure);
+    assert.ok(privacy);
+
+    const ctx = createCtx();
+    await configure.handler("publicKey=pk-lf-public secretKey=sk-lf-secret", ctx);
+    await privacy.handler("preset=everything", ctx);
+
+    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
+    assert.match(lastMessage(ctx), /Unknown preset 'everything'/);
+    assert.match(lastMessage(ctx), /Choose one of: minimal, strict, prompts-only, conversations, full-debug/);
+    assert.match(lastMessage(ctx), /Example: \/langfuse-privacy preset=conversations/);
   });
 });
 
