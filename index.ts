@@ -531,8 +531,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
   });
 
   pi.registerCommand("langfuse-configure", {
-    description:
-      "Persist Langfuse config. Usage: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true]",
+    description: `Persist Langfuse config. ${COMMAND_USAGE.configure}`,
     handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
       const commandArgs = parseCommandArgs(args);
       if (
