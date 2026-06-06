@@ -1,4 +1,4 @@
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import {
   startObservation,
@@ -15,7 +15,7 @@ import type { CapturedPayload } from "./capture-policy.js";
 import type { LangfuseConfig } from "./config.js";
 import type { GenerationPayload } from "./telemetry.js";
 
-let provider: NodeTracerProvider | null = null;
+let provider: BasicTracerProvider | null = null;
 let processor: LangfuseSpanProcessor | null = null;
 let transportKey: string | null = null;
 let lastError: { scope: string; message: string; timestamp: Date } | null = null;
@@ -70,7 +70,7 @@ export async function initTransport(config: LangfuseConfig): Promise<void> {
       secretKey: config.secretKey,
       baseUrl: config.host,
     });
-    provider = new NodeTracerProvider({ spanProcessors: [processor] });
+    provider = new BasicTracerProvider({ spanProcessors: [processor] });
     setLangfuseTracerProvider(provider);
     transportKey = nextKey;
     clearLastError();

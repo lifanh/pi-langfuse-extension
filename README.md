@@ -184,7 +184,7 @@ Pi Agent Events
 
 Transport details:
 
-- Uses `NodeTracerProvider` from `@opentelemetry/sdk-trace-node` with `LangfuseSpanProcessor` from `@langfuse/otel`.
+- Uses `BasicTracerProvider` from `@opentelemetry/sdk-trace-base` with `LangfuseSpanProcessor` from `@langfuse/otel`.
 - Creates Langfuse observations via `startObservation` from `@langfuse/tracing`.
 - Uses Langfuse's isolated tracer provider hook instead of registering a global OpenTelemetry provider.
 - Sets trace-level attributes (`langfuse.trace.name`, tags, metadata, and `session.id`) on agent spans and copies them to child generation/tool spans.
