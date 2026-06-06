@@ -1,5 +1,8 @@
 # @lifanh/pi-langfuse-extension
 
+[![npm version](https://img.shields.io/npm/v/@lifanh/pi-langfuse-extension.svg)](https://www.npmjs.com/package/@lifanh/pi-langfuse-extension)
+[![License](https://img.shields.io/npm/l/@lifanh/pi-langfuse-extension.svg)](LICENSE)
+
 Langfuse observability for [Pi Coding Agent](https://github.com/badlogic/pi-mono).
 
 Use this extension to send Pi agent runs, model calls, tool executions, token usage, cost, and errors to Langfuse. By default it sends metadata only. Prompt, response, tool I/O, system prompt, and cwd capture are opt-in. Captured local paths are redacted or replaced with stable hashes before transmission.
