@@ -1,16 +1,18 @@
 # @lifanh/pi-langfuse-extension
 
-Privacy-first Langfuse observability extension for [Pi Coding Agent](https://github.com/badlogic/pi-mono).
+Langfuse observability for [Pi Coding Agent](https://github.com/badlogic/pi-mono).
 
-This package starts from a strict privacy model: metadata-only tracing by default, explicit opt-in for content capture, and one shared redaction path for every payload before it can reach Langfuse.
+Use this extension to send Pi agent runs, model calls, tool executions, token usage, cost, and errors to Langfuse. By default it sends metadata only. Prompt, response, tool I/O, system prompt, and cwd capture are opt-in. Captured local paths are redacted or replaced with stable hashes before transmission.
 
-## 30-second quickstart
+## Quickstart
+
+Install the extension:
 
 ```bash
 pi install npm:@lifanh/pi-langfuse-extension
 ```
 
-In Pi, save credentials and keep the default minimal metadata privacy posture:
+Configure Langfuse from inside Pi:
 
 ```text
 /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...
@@ -18,108 +20,52 @@ In Pi, save credentials and keep the default minimal metadata privacy posture:
 /langfuse-status
 ```
 
-To enable a specific capture flag later, you do **not** need to re-enter credentials:
+After an agent run, check Langfuse for a `pi-agent-run` trace with nested generation and tool observations.
 
-```text
-/langfuse-configure captureInputs=true
-# or
-/langfuse-privacy preset=conversations
-```
+## Current status
 
-## Status
+Version `0.1.2` is prepared for npm as `@lifanh/pi-langfuse-extension`.
 
-Active pre-1.0 development. Version `0.1.0` is published on npm as `@lifanh/pi-langfuse-extension`, and future releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
-
-The extension sends traces to Langfuse via the OpenTelemetry-based Langfuse SDK v5. Each Pi agent run creates a parent `agent` observation with nested `generation` observations for provider/model calls and nested `tool` observations for every tool execution. All payloads pass through the privacy controls (capture policy + redaction) before transmission.
+This package is still in pre-1.0 development. Releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
 
 Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
 
-## Install
+## What it records
 
-```bash
-pi install npm:@lifanh/pi-langfuse-extension
-```
+Each Pi agent run creates:
 
-For local development:
+- an `agent` observation for the overall run
+- `generation` observations for provider/model calls
+- `tool` observations for tool executions
 
-```bash
-npm install
-npm test
-```
-
-## Configuration
-
-Set Langfuse credentials through environment variables for non-interactive use:
-
-```bash
-export LANGFUSE_PUBLIC_KEY=pk-lf-...
-export LANGFUSE_SECRET_KEY=sk-lf-...
-export LANGFUSE_HOST=https://cloud.langfuse.com
-```
-
-Configuration files are namespaced under:
-
-```text
-~/.pi/agent/@lifanh/pi-langfuse-extension/config.json
-```
-
-Persist configuration from Pi with:
-
-```text
-/langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... host=https://cloud.langfuse.com
-```
-
-`/langfuse-configure` is non-destructive. If a config file already exists, omitted fields are preserved, so changing one privacy flag is safe:
-
-```text
-/langfuse-configure captureInputs=true
-/langfuse-configure host=https://us.cloud.langfuse.com
-```
-
-Optional capture flags can be saved with the same command:
-
-```text
-/langfuse-configure captureInputs=true captureOutputs=true captureToolIo=true captureSystemPrompt=true captureCwd=true debug=true
-```
-
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `/langfuse-status` | Show configuration source, masked public key, host, privacy posture, debug setting, config path, and last transport error. |
-| `/langfuse-configure ...` | Save or update credentials, host, debug, and capture flags. Omitted fields are preserved from the saved config file. |
-| `/langfuse-test` | Make a timeout-bounded authenticated Langfuse API request and report success or failure in Pi. |
-| `/langfuse-privacy` | Show the current capture policy. |
-| `/langfuse-privacy captureInputs=true` | Update one or more capture flags without re-entering credentials. |
-| `/langfuse-privacy all=false` | Disable all content capture flags. |
-| `/langfuse-privacy preset=minimal` | Apply a named preset: `minimal`, `strict` (alias), `prompts-only`, `conversations`, or `full-debug`. |
-| `/langfuse-reset` | Delete the saved config file after confirmation. Environment variables still work. |
-
-Commands validate their arguments before changing configuration. If a command receives a malformed option such as `captureInputs` instead of `captureInputs=true`, an unknown option such as `capturePrompts=true`, or an invalid boolean such as `captureInputs=yes`, Pi shows a warning with the accepted usage and an example command.
-
-When the extension is loaded but unconfigured, Pi shows a one-time onboarding hint. During agent runs with tracing configured, the footer displays `◉ langfuse` and clears it when the run ends or the session shuts down.
-
-## What gets sent by default?
-
-By default, the extension uses **minimal metadata tracing**. This is not “no telemetry”: it creates useful Langfuse traces without prompts, responses, tool inputs/outputs, system prompts, current working directory, or raw file paths.
-
-Default traces can still answer operational questions like:
+Default traces answer questions like:
 
 - Did a Pi agent run happen?
-- Which model/provider was used?
+- Which model and provider were used?
 - Which turns and tools ran?
-- How many tokens were used, and what did the call cost if Pi/provider reported cost?
-- Did the provider/tool report an error?
+- How many tokens were used?
+- What did the call cost, if Pi/provider reported cost?
+- Did a provider or tool report an error?
 
-Minimal metadata fields include:
+Default metadata includes:
 
-| Observation | Metadata sent by default | Content deliberately not sent by default |
+| Observation | Sent by default | Not sent by default |
 | --- | --- | --- |
 | Agent run | `agent`, `extension`, `model`, `provider`, `sessionId` | user prompt, attachments/images/context, system prompt, cwd |
 | Generation | `model`, model parameters, usage, cost, provider/API, response id, stop reason, turn index, HTTP status/headers | provider request payload and assistant response content |
 | Tool | `toolName`, `toolCallId`, `isError` | tool arguments and tool results |
 
-All sensitive content capture flags are disabled by default.
+## Enabling content capture
+
+Content capture is controlled by explicit flags. Captured content is redacted before it is sent to Langfuse.
+
+Enable individual fields:
+
+```text
+/langfuse-configure captureInputs=true captureOutputs=true
+```
+
+Available flags:
 
 | Flag | Default | When enabled |
 | --- | --- | --- |
@@ -130,49 +76,79 @@ All sensitive content capture flags are disabled by default.
 | `captureCwd` / `LANGFUSE_CAPTURE_CWD` | off | Captures the current working directory after path redaction/hashing. |
 | `debug` / `LANGFUSE_DEBUG` | off | Enables extension debug logging. |
 
-Privacy presets map to the content capture flags:
+To return to metadata-only tracing:
 
-| Preset | inputs | outputs | tool I/O | system prompt | cwd | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| `minimal` | off | off | off | off | off | Default; metadata-only tracing. |
-| `strict` | off | off | off | off | off | Alias for `minimal` for backwards-compatible command usage. |
-| `prompts-only` | on | off | off | off | off | Captures prompts after redaction. |
-| `conversations` | on | on | off | off | off | Captures prompts and responses after redaction. |
-| `full-debug` | on | on | on | on | on | Captures all supported fields after redaction. |
+```text
+/langfuse-configure captureInputs=false captureOutputs=false captureToolIo=false captureSystemPrompt=false captureCwd=false
+```
 
-Even when capture is enabled, payloads pass through the shared redaction pipeline.
+## Configuration
 
-## How to verify
+Configure from Pi:
 
-1. Run `/langfuse-status` to confirm the effective source, host, privacy posture, and last error.
+```text
+/langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... host=https://cloud.langfuse.com
+```
+
+`/langfuse-configure` preserves omitted fields when a saved config file already exists. For example, this updates only the host:
+
+```text
+/langfuse-configure host=https://us.cloud.langfuse.com
+```
+
+Configuration is saved at:
+
+```text
+~/.pi/agent/@lifanh/pi-langfuse-extension/config.json
+```
+
+You can also configure non-interactively with environment variables:
+
+```bash
+export LANGFUSE_PUBLIC_KEY=pk-lf-...
+export LANGFUSE_SECRET_KEY=sk-lf-...
+export LANGFUSE_HOST=https://cloud.langfuse.com
+```
+
+Configuration source is selected as a whole:
+
+1. If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, environment configuration is used. `LANGFUSE_HOST` or `LANGFUSE_BASE_URL` and `LANGFUSE_CAPTURE_*` flags are read from the same environment.
+2. Otherwise, the saved config file is used (`~/.pi/agent/@lifanh/pi-langfuse-extension/config.json`).
+3. Built-in defaults fill in missing optional values (`https://cloud.langfuse.com`, metadata-only tracing, all content capture flags off).
+
+Environment host and capture flags are not merged into a saved config unless the environment also provides both credentials. If both environment credentials and the config file are present, environment configuration wins. `/langfuse-status` shows this as `environment variables (overrides config file)`.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/langfuse-status` | Show configuration source, masked public key, host, capture settings, debug setting, config path, and last transport error. |
+| `/langfuse-configure ...` | Save or update credentials, host, debug, and capture flags. Omitted fields are preserved from the saved config file. |
+| `/langfuse-test` | Make a timeout-bounded authenticated Langfuse API request and report success or failure in Pi. |
+
+Commands validate arguments before changing configuration. If a command receives `captureInputs` instead of `captureInputs=true`, an unknown option such as `capturePrompts=true`, or an invalid boolean such as `captureInputs=yes`, Pi shows a warning with accepted usage and an example.
+
+When the extension is loaded but unconfigured, Pi shows a one-time onboarding hint. During configured agent runs, the footer displays `◉ langfuse` and clears it when the run ends or the session shuts down.
+
+## Verify setup
+
+1. Run `/langfuse-status` to confirm the effective source, host, capture settings, and last error.
 2. Run `/langfuse-test` to verify credentials and host connectivity.
 3. Start an agent run and check for the `◉ langfuse` footer indicator.
 4. Check Langfuse for a `pi-agent-run` trace with nested generation/tool observations.
 
-## Precedence rules
+## Disable or reset
 
-Configuration precedence is:
+To temporarily disable tracing, unset `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`, then remove the saved config file shown by `/langfuse-status`:
 
-1. Environment variables (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` or `LANGFUSE_BASE_URL`, capture flags)
-2. Saved config file (`~/.pi/agent/@lifanh/pi-langfuse-extension/config.json`)
-3. Built-in defaults (`https://cloud.langfuse.com`, minimal metadata tracing, all content capture flags off)
-
-If both environment variables and the config file are present, environment variables win. `/langfuse-status` explicitly shows `environment variables (overrides config file)` in that case.
-
-## How to disable or reset
-
-To temporarily disable tracing, unset `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` and remove the saved config file:
-
-```text
-/langfuse-reset
+```bash
+rm ~/.pi/agent/@lifanh/pi-langfuse-extension/config.json
 ```
 
-To keep tracing but return to minimal metadata-only privacy:
+To keep tracing but disable content capture:
 
 ```text
-/langfuse-privacy all=false
-# or
-/langfuse-privacy preset=minimal
+/langfuse-configure captureInputs=false captureOutputs=false captureToolIo=false captureSystemPrompt=false captureCwd=false
 ```
 
 ## Troubleshooting
@@ -183,46 +159,58 @@ To keep tracing but return to minimal metadata-only privacy:
 | `/langfuse-test` returns `401` or `403` | Check that the public and secret keys belong to the same Langfuse project and host. |
 | `/langfuse-test` times out | Verify network access and `LANGFUSE_HOST`; self-hosted instances must be reachable from the Pi process. |
 | Status shows environment variables overriding the file | Update/unset the environment variables, or expect them to take precedence over `/langfuse-configure` values. |
-| No prompt/response content appears in Langfuse | This is the default privacy posture. Enable only the needed flags with `/langfuse-privacy` or `/langfuse-configure`. |
+| No prompt/response content appears in Langfuse | This is the default. Enable only the needed fields with `/langfuse-configure`. |
 | Pi runs continue despite Langfuse errors | Expected. Langfuse failures are isolated; check `/langfuse-status` for the last captured error. |
 
 ## Architecture
 
-```
+```text
 Pi Agent Events
   │
   ├── session_start             ──▶  one-time onboarding hint if unconfigured
   ├── before_agent_start        ──▶  initTransport()  ──▶  createAgentSpan() ──▶ footer status
   ├── before_provider_request   ──▶  createGenerationSpan() (child of agent span)
-  ├── after_provider_response   ──▶  update generation metadata
-  ├── turn_end/message_end      ──▶  endGenerationSpan()    (usage + output + errors)
+  ├── after_provider_response   ──▶  store response metadata for generation
+  ├── message_end               ──▶  cache assistant message
+  ├── turn_end                  ──▶  endGenerationSpan()    (usage + output + errors)
   ├── tool_execution_start      ──▶  createToolSpan()       (child of agent span)
   ├── tool_execution_end        ──▶  endToolSpan()          (update + end)
   ├── agent_end                 ──▶  endAgentSpan()         ──▶  flush() ──▶ clear footer
   └── session_shutdown          ──▶  shutdown()             ──▶  clear footer
 ```
 
-**Transport layer** (`src/transport.js`):
-- Uses `NodeTracerProvider` from `@opentelemetry/sdk-trace-node` with `LangfuseSpanProcessor` from `@langfuse/otel`
-- Creates Langfuse observations via `startObservation` from `@langfuse/tracing`
-- Uses Langfuse's isolated tracer provider hook instead of registering a global OpenTelemetry provider
-- Propagates trace-level attributes (name, tags, metadata) via `propagateAttributes`
-- Reinitializes transport if saved/env host or credentials change during a long-running Pi process
-- Records the last transport error for `/langfuse-status` while keeping Langfuse failures isolated from Pi agent execution
+Transport details:
+
+- Uses `NodeTracerProvider` from `@opentelemetry/sdk-trace-node` with `LangfuseSpanProcessor` from `@langfuse/otel`.
+- Creates Langfuse observations via `startObservation` from `@langfuse/tracing`.
+- Uses Langfuse's isolated tracer provider hook instead of registering a global OpenTelemetry provider.
+- Sets trace-level attributes (`langfuse.trace.name`, tags, metadata, and `session.id`) on agent spans and copies them to child generation/tool spans.
+- Reinitializes transport if saved/env host or credentials change during a long-running Pi process.
+- Records the last transport error for `/langfuse-status` while keeping Langfuse failures isolated from Pi agent execution.
 
 ## Redaction
 
-The redactor covers:
+Captured content passes through a shared redaction pipeline before transmission. The redactor covers:
 
 - API keys and bearer tokens
 - Authorization, cookie, token, password, and secret-like fields
 - Langfuse, OpenAI, Anthropic, GitHub, npm, and AWS-style token patterns
 - Private key blocks
 - `.env`-style key/value secrets
-- Local absolute paths, replaced with stable short hashes
+- Common local absolute paths (`/Users`, `/home`, `/tmp`, `/private/tmp`, and `C:\Users`), replaced with stable short hashes
 - Large or deeply nested payloads, with bounded traversal
 
-## Development Guardrails
+## Development
+
+Install dependencies and run checks:
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+npm pack --dry-run
+```
 
 Changes here should preserve these constraints:
 
@@ -231,15 +219,6 @@ Changes here should preserve these constraints:
 - Langfuse failures must not break Pi agent execution.
 - REST fallback remains disabled until duplicate/idempotent behavior is tested.
 - Tests must cover redaction and disabled capture behavior before transport changes.
-
-## Scripts
-
-```bash
-npm run typecheck
-npm test
-npm run build
-npm pack --dry-run
-```
 
 ## Release
 

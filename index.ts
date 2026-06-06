@@ -1,5 +1,3 @@
-import { existsSync, unlinkSync } from "node:fs";
-
 import type {
   AgentEndEvent,
   BeforeProviderRequestEvent,
@@ -148,9 +146,6 @@ const COMMAND_USAGE = {
   configure:
     "Usage: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-... [host=https://cloud.langfuse.com] [captureInputs=true|false] [captureOutputs=true|false] [captureToolIo=true|false] [captureSystemPrompt=true|false] [captureCwd=true|false] [debug=true|false]",
   test: "Usage: /langfuse-test",
-  reset: "Usage: /langfuse-reset",
-  privacy:
-    "Usage: /langfuse-privacy [captureInputs=true|false] [all=false] [preset=minimal|strict|prompts-only|conversations|full-debug]",
 } as const;
 
 function parseCommandArgs(args: string): ParsedCommandArgs {
@@ -192,41 +187,6 @@ const CAPTURE_ARG_TO_ENV: Array<[CaptureArgName, string]> = [
 
 const CAPTURE_ARG_NAMES = CAPTURE_ARG_TO_ENV.map(([argName]) => argName);
 const CONFIGURE_ARG_NAMES = ["publicKey", "secretKey", "host", ...CAPTURE_ARG_NAMES];
-const PRIVACY_ARG_NAMES = [...CAPTURE_ARG_NAMES, "all", "preset"];
-
-const MINIMAL_METADATA_CAPTURE: Record<string, string> = {
-  LANGFUSE_CAPTURE_INPUTS: "false",
-  LANGFUSE_CAPTURE_OUTPUTS: "false",
-  LANGFUSE_CAPTURE_TOOL_IO: "false",
-  LANGFUSE_CAPTURE_SYSTEM_PROMPT: "false",
-  LANGFUSE_CAPTURE_CWD: "false",
-};
-
-const PRIVACY_PRESETS: Record<string, Record<string, string>> = {
-  minimal: MINIMAL_METADATA_CAPTURE,
-  strict: MINIMAL_METADATA_CAPTURE,
-  "prompts-only": {
-    LANGFUSE_CAPTURE_INPUTS: "true",
-    LANGFUSE_CAPTURE_OUTPUTS: "false",
-    LANGFUSE_CAPTURE_TOOL_IO: "false",
-    LANGFUSE_CAPTURE_SYSTEM_PROMPT: "false",
-    LANGFUSE_CAPTURE_CWD: "false",
-  },
-  conversations: {
-    LANGFUSE_CAPTURE_INPUTS: "true",
-    LANGFUSE_CAPTURE_OUTPUTS: "true",
-    LANGFUSE_CAPTURE_TOOL_IO: "false",
-    LANGFUSE_CAPTURE_SYSTEM_PROMPT: "false",
-    LANGFUSE_CAPTURE_CWD: "false",
-  },
-  "full-debug": {
-    LANGFUSE_CAPTURE_INPUTS: "true",
-    LANGFUSE_CAPTURE_OUTPUTS: "true",
-    LANGFUSE_CAPTURE_TOOL_IO: "true",
-    LANGFUSE_CAPTURE_SYSTEM_PROMPT: "true",
-    LANGFUSE_CAPTURE_CWD: "true",
-  },
-};
 
 function captureArgs(args: Record<string, string>): Record<string, string | undefined> {
   const capture: Record<string, string | undefined> = {};
@@ -449,7 +409,7 @@ function formatStatus(config: LangfuseConfig | null): string {
     `  Host:           ${safeConfig?.host ?? config.host}`,
     `  Public key:     ${safeConfig?.publicKey ?? "[REDACTED_SECRET]"}`,
     "",
-    `  Privacy mode:   ${privacyMode(config)}`,
+    `  Capture mode:   ${privacyMode(config)}`,
     "  Content capture:",
     ...formatCapturePolicy(config),
     "",
@@ -617,153 +577,6 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       }
       const result = await testConnectivity(config);
       notify(ctx, result.message, result.ok ? "info" : "error");
-    },
-  });
-
-  pi.registerCommand("langfuse-reset", {
-    description: "Remove saved Langfuse configuration",
-    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-      if (rejectNoArgCommandArgs(args, ctx, COMMAND_USAGE.reset)) {
-        return;
-      }
-      const configPath = configPathForHome();
-      if (!existsSync(configPath)) {
-        notify(ctx, "No saved config to reset.", "info");
-        return;
-      }
-
-      if (ctx.hasUI) {
-        const ok = await ctx.ui.confirm(
-          "Reset Langfuse config?",
-          `This deletes ${configPath}. Environment variables will still work.`,
-        );
-        if (!ok) {
-          notify(ctx, "Reset cancelled.", "info");
-          return;
-        }
-      }
-
-      unlinkSync(configPath);
-      config = loadConfig();
-      notify(ctx, "Config file removed. Environment variables will still work.", "info");
-    },
-  });
-
-  pi.registerCommand("langfuse-privacy", {
-    description:
-      "Show or update Langfuse privacy flags. Usage: /langfuse-privacy [captureInputs=true] [all=false] [preset=minimal]",
-    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-      const commandArgs = parseCommandArgs(args);
-      if (
-        rejectMalformedArgs(commandArgs, ctx, "captureInputs=true", COMMAND_USAGE.privacy) ||
-        rejectUnknownArgs(
-          commandArgs,
-          ctx,
-          PRIVACY_ARG_NAMES,
-          "privacy setting",
-          COMMAND_USAGE.privacy,
-          "/langfuse-privacy captureInputs=true",
-        ) ||
-        rejectInvalidBooleans(
-          commandArgs.values,
-          ctx,
-          [...CAPTURE_ARG_NAMES, "all"],
-          COMMAND_USAGE.privacy,
-        )
-      ) {
-        return;
-      }
-      const parsed = commandArgs.values;
-      const existingFile = loadConfigFromFile();
-      const current = loadConfig();
-
-      if (Object.keys(parsed).length === 0) {
-        if (!current) {
-          notify(
-            ctx,
-            [
-              "Not configured. Run /langfuse-configure first.",
-              "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
-            ].join("\n"),
-            "warning",
-          );
-          return;
-        }
-        notify(
-          ctx,
-          [
-            `${EXTENSION_NAME} privacy mode: ${privacyMode(current)}`,
-            "Content capture:",
-            ...formatCapturePolicy(current),
-            "",
-            "Minimal metadata sent:",
-            ...minimalMetadataSummary(),
-          ].join("\n"),
-          "info",
-        );
-        return;
-      }
-
-      const publicKey = existingFile?.publicKey;
-      const secretKey = existingFile?.secretKey;
-      if (!publicKey || !secretKey) {
-        notify(
-          ctx,
-          [
-            "No saved config file found. Run /langfuse-configure before changing saved privacy flags.",
-            "Example: /langfuse-configure publicKey=pk-lf-... secretKey=sk-lf-...",
-          ].join("\n"),
-          "warning",
-        );
-        return;
-      }
-
-      let updates: Record<string, string | undefined> = {};
-      if (parsed["preset"] !== undefined) {
-        const preset = PRIVACY_PRESETS[parsed["preset"]];
-        if (!preset) {
-          notify(
-            ctx,
-            [
-              `Unknown preset '${parsed["preset"]}'. Choose one of: ${Object.keys(PRIVACY_PRESETS).join(", ")}.`,
-              "Example: /langfuse-privacy preset=conversations",
-              COMMAND_USAGE.privacy,
-            ].join("\n"),
-            "warning",
-          );
-          return;
-        }
-        updates = { ...updates, ...preset };
-      }
-      if (parsed["all"] !== undefined) {
-        for (const [, envName] of CAPTURE_ARG_TO_ENV) {
-          if (envName !== "LANGFUSE_DEBUG") {
-            updates[envName] = parsed["all"];
-          }
-        }
-      }
-      updates = { ...updates, ...captureArgs(parsed) };
-
-      if (Object.keys(updates).length === 0) {
-        notify(
-          ctx,
-          [
-            "No privacy flags provided. Use captureInputs=true, all=false, or preset=minimal.",
-            COMMAND_USAGE.privacy,
-          ].join("\n"),
-          "warning",
-        );
-        return;
-      }
-
-      saveConfig({
-        publicKey,
-        secretKey,
-        host: existingFile.host,
-        capture: { ...capturePolicyToPersisted(existingFile), ...updates },
-      });
-      config = loadConfig();
-      notify(ctx, `${EXTENSION_NAME} privacy settings updated: ${summarizeAppliedArgs(parsed)}.`);
     },
   });
 

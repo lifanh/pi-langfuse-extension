@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -125,10 +125,8 @@ test("commands reject unexpected arguments with usage guidance", async () => {
     await extension(pi);
     const status = commands.get("langfuse-status");
     const testCommand = commands.get("langfuse-test");
-    const reset = commands.get("langfuse-reset");
     assert.ok(status);
     assert.ok(testCommand);
-    assert.ok(reset);
 
     const ctx = createCtx();
     await status.handler("verbose=true", ctx);
@@ -142,12 +140,21 @@ test("commands reject unexpected arguments with usage guidance", async () => {
     assert.match(lastMessage(ctx), /Unexpected argument 'now'/);
     assert.match(lastMessage(ctx), /Usage: \/langfuse-test/);
     assert.match(lastMessage(ctx), /Run \/langfuse-test without arguments/);
+  });
+});
 
-    await reset.handler("force=true", ctx);
-    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
-    assert.match(lastMessage(ctx), /Unexpected argument 'force'/);
-    assert.match(lastMessage(ctx), /Usage: \/langfuse-reset/);
-    assert.match(lastMessage(ctx), /Run \/langfuse-reset without arguments/);
+test("registers only configure, status, and test commands", async () => {
+  await withHome(async () => {
+    const { commands, pi } = createPi();
+    await extension(pi);
+
+    assert.deepEqual([...commands.keys()].sort(), [
+      "langfuse-configure",
+      "langfuse-status",
+      "langfuse-test",
+    ]);
+    assert.equal(commands.has("langfuse-privacy"), false);
+    assert.equal(commands.has("langfuse-reset"), false);
   });
 });
 
@@ -195,58 +202,6 @@ test("langfuse-configure validates boolean capture flags before saving", async (
   });
 });
 
-test("langfuse-privacy reports malformed, unknown, and invalid values with guidance", async () => {
-  await withHome(async () => {
-    const { commands, pi } = createPi();
-    await extension(pi);
-    const configure = commands.get("langfuse-configure");
-    const privacy = commands.get("langfuse-privacy");
-    assert.ok(configure);
-    assert.ok(privacy);
-
-    const ctx = createCtx();
-    await configure.handler("publicKey=pk-lf-public secretKey=sk-lf-secret", ctx);
-
-    await privacy.handler("captureInputs", ctx);
-    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
-    assert.match(lastMessage(ctx), /Couldn't understand 'captureInputs'/);
-    assert.match(lastMessage(ctx), /Use key=value, for example captureInputs=true/);
-    assert.match(lastMessage(ctx), /Usage: \/langfuse-privacy/);
-
-    await privacy.handler("capturePrompts=true", ctx);
-    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
-    assert.match(lastMessage(ctx), /Unknown privacy setting 'capturePrompts'/);
-    assert.match(lastMessage(ctx), /Allowed settings: captureInputs, captureOutputs, captureToolIo, captureSystemPrompt, captureCwd, debug, all, preset/);
-    assert.match(lastMessage(ctx), /prompts-only/);
-    assert.match(lastMessage(ctx), /Example: \/langfuse-privacy captureInputs=true/);
-
-    await privacy.handler("captureOutputs=maybe", ctx);
-    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
-    assert.match(lastMessage(ctx), /Invalid value for captureOutputs='maybe'/);
-    assert.match(lastMessage(ctx), /Use captureOutputs=true or captureOutputs=false/);
-  });
-});
-
-test("langfuse-privacy explains available presets when preset is invalid", async () => {
-  await withHome(async () => {
-    const { commands, pi } = createPi();
-    await extension(pi);
-    const configure = commands.get("langfuse-configure");
-    const privacy = commands.get("langfuse-privacy");
-    assert.ok(configure);
-    assert.ok(privacy);
-
-    const ctx = createCtx();
-    await configure.handler("publicKey=pk-lf-public secretKey=sk-lf-secret", ctx);
-    await privacy.handler("preset=everything", ctx);
-
-    assert.equal(ctx.ui.messages.at(-1)?.level, "warning");
-    assert.match(lastMessage(ctx), /Unknown preset 'everything'/);
-    assert.match(lastMessage(ctx), /Choose one of: minimal, strict, prompts-only, conversations, full-debug/);
-    assert.match(lastMessage(ctx), /Example: \/langfuse-privacy preset=conversations/);
-  });
-});
-
 test("langfuse-status reports minimal metadata tracing and config source", async () => {
   await withHome(async () => {
     const { commands, pi } = createPi();
@@ -263,73 +218,12 @@ test("langfuse-status reports minimal metadata tracing and config source", async
     const message = ctx.ui.messages.at(-1)?.message ?? "";
     assert.match(message, /State:\s+configured ✓/);
     assert.match(message, /Source:\s+config file/);
-    assert.match(message, /Privacy mode:\s+custom/);
+    assert.match(message, /Capture mode:\s+custom/);
     assert.match(message, /Content capture:/);
     assert.match(message, /captureInputs:\s+off/);
     assert.match(message, /captureOutputs:\s+on/);
     assert.match(message, /Minimal metadata sent:/);
     assert.match(message, /generation: model, parameters, usage, cost, status, stop reason, turn index/);
     assert.match(message, /Last error:/);
-  });
-});
-
-test("langfuse-privacy applies presets and all toggles to saved config", async () => {
-  await withHome(async (home) => {
-    const { commands, pi } = createPi();
-    await extension(pi);
-    const configure = commands.get("langfuse-configure");
-    const privacy = commands.get("langfuse-privacy");
-    assert.ok(configure);
-    assert.ok(privacy);
-
-    const ctx = createCtx();
-    await configure.handler("publicKey=pk-lf-public secretKey=sk-lf-secret", ctx);
-    await privacy.handler("preset=minimal", ctx);
-    let saved = JSON.parse(readFileSync(configPathForHome(home), "utf8"));
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_INPUTS, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_OUTPUTS, "false");
-
-    await privacy.handler("preset=conversations", ctx);
-    saved = JSON.parse(readFileSync(configPathForHome(home), "utf8"));
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_INPUTS, "true");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_OUTPUTS, "true");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_TOOL_IO, "false");
-
-    await privacy.handler("all=false", ctx);
-    saved = JSON.parse(readFileSync(configPathForHome(home), "utf8"));
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_INPUTS, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_OUTPUTS, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_TOOL_IO, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_SYSTEM_PROMPT, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_CWD, "false");
-
-    await privacy.handler("all=yes", ctx);
-    saved = JSON.parse(readFileSync(configPathForHome(home), "utf8"));
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_INPUTS, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_OUTPUTS, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_TOOL_IO, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_SYSTEM_PROMPT, "false");
-    assert.equal(saved.capture.LANGFUSE_CAPTURE_CWD, "false");
-    assert.match(ctx.ui.messages.at(-1)?.message ?? "", /Invalid value for all='yes'/);
-  });
-});
-
-test("langfuse-reset removes saved config", async () => {
-  await withHome(async (home) => {
-    const { commands, pi } = createPi();
-    await extension(pi);
-    const reset = commands.get("langfuse-reset");
-    assert.ok(reset);
-
-    const configPath = configPathForHome(home);
-    mkdirSync(join(configPath, ".."), { recursive: true });
-    writeFileSync(configPath, JSON.stringify({ publicKey: "pk", secretKey: "sk" }), {
-      encoding: "utf8",
-    });
-    const ctx = createCtx();
-    await reset.handler("", ctx);
-
-    assert.throws(() => readFileSync(configPath, "utf8"), /ENOENT/);
-    assert.match(ctx.ui.messages.at(-1)?.message ?? "", /Config file removed/);
   });
 });
