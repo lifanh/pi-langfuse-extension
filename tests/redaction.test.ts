@@ -52,3 +52,69 @@ test("limits payload shape without leaking omitted keys", () => {
   assert.deepEqual(Object.keys(result), ["key0", "key1", "key2", "__truncatedKeys"]);
   assert.equal(result["__truncatedKeys"], 117);
 });
+
+test("redacts camelCase and snake_case secret field names", () => {
+  const result = redactValue({
+    apiKey: "should-be-redacted",
+    access_token: "should-be-redacted",
+    clientSecret: "should-be-redacted",
+    AccessToken: "should-be-redacted",
+    "x-api-key": "should-be-redacted",
+    refresh_token: "should-be-redacted",
+    sessionToken: "should-be-redacted",
+    privateKey: "should-be-redacted",
+    tokenCount: 42,
+    maxTokens: 4096,
+  }) as Record<string, unknown>;
+
+  assert.equal(result.apiKey, "[REDACTED_SECRET]");
+  assert.equal(result.access_token, "[REDACTED_SECRET]");
+  assert.equal(result.clientSecret, "[REDACTED_SECRET]");
+  assert.equal(result.AccessToken, "[REDACTED_SECRET]");
+  assert.equal(result["x-api-key"], "[REDACTED_SECRET]");
+  assert.equal(result.refresh_token, "[REDACTED_SECRET]");
+  assert.equal(result.sessionToken, "[REDACTED_SECRET]");
+  assert.equal(result.privateKey, "[REDACTED_SECRET]");
+
+  // Benign keys that merely contain "token" as a substring must survive
+  // untouched -- only exact normalized-name matches are redacted.
+  assert.equal(result.tokenCount, 42);
+  assert.equal(result.maxTokens, 4096);
+});
+
+test("redacts a secret that straddles the truncation boundary", () => {
+  const maxStringLength = 60;
+  const fakeKey = ["sk", "ant", "api03", "fake-test-abcdefghijklmnopqrstuvwxyz"].join("-");
+  // Pad the prefix (ending on a non-word character so the token's own word
+  // boundary is intact) so the secret token itself starts well before
+  // maxStringLength and ends well after it -- if truncation happened before
+  // redaction, the cut would land mid-token and leave a live-looking prefix
+  // in the output instead of getting redacted. The padding is short enough
+  // that the "[REDACTED_SECRET]" marker itself still fits before the limit.
+  const padding = `${"z".repeat(39)} `;
+  const value = `${padding}${fakeKey}`;
+
+  const result = redactValue(
+    { prompt: value },
+    { maxStringLength },
+  ) as { prompt: string };
+
+  assert.doesNotMatch(result.prompt, /sk-ant-api03/);
+  assert.match(result.prompt, /\[REDACTED_SECRET\]/);
+});
+
+test("redacts an unterminated private key block cut off by truncation", () => {
+  const maxStringLength = 60;
+  const body = Array.from({ length: 20 }, (_, index) => `line${index}base64data`).join("\n");
+  // No "-----END ... PRIVATE KEY-----" marker at all: it either got sliced
+  // off by truncation upstream, or the payload is simply malformed/partial.
+  const value = `-----BEGIN RSA PRIVATE KEY-----\n${body}`;
+
+  const result = redactValue(
+    { secretBlob: value },
+    { maxStringLength },
+  ) as { secretBlob: string };
+
+  assert.doesNotMatch(result.secretBlob, /base64data/);
+  assert.match(result.secretBlob, /\[REDACTED_SECRET\]/);
+});

@@ -26,9 +26,6 @@
   },
   "files": [
     "dist",
-    "src",
-    "index.ts",
-    "tsconfig.json",
     "README.md",
     "LICENSE"
   ],
