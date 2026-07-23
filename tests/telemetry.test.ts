@@ -227,6 +227,24 @@ test("normalizeContentForLangfuse: tool calls with no text → OpenAI format for
   assert.equal(toolCalls[1]!.function.name, "bash");
 });
 
+test("normalizeContentForLangfuse: redacts sensitive tool-call argument fields before stringifying", () => {
+  const content = [
+    {
+      type: "toolCall",
+      id: "call_secret",
+      name: "http_request",
+      arguments: { url: "https://api.example.com", apiKey: "super-secret-value", clientSecret: "another-secret" },
+    },
+  ];
+  const result = normalizeContentForLangfuse(content, "openai-completions") as Record<string, unknown>;
+  const toolCalls = result["tool_calls"] as { function: { arguments: string } }[];
+  const args = toolCalls[0]!.function.arguments;
+  assert.ok(!args.includes("super-secret-value"), "apiKey value must not leak into stringified arguments");
+  assert.ok(!args.includes("another-secret"), "clientSecret value must not leak into stringified arguments");
+  assert.ok(args.includes("[REDACTED_SECRET]"), "sensitive fields should be redacted");
+  assert.ok(args.includes("https://api.example.com"), "non-sensitive fields pass through");
+});
+
 test("normalizeContentForLangfuse: tool calls → OpenAI format for openai-responses", () => {
   const content = [
     { type: "toolCall", id: "tc_1", name: "edit", arguments: { file: "a.ts" } },

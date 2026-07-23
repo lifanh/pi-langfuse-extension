@@ -3,6 +3,7 @@ import {
   type CapturedPayload,
 } from "./capture-policy.js";
 import type { LangfuseConfig } from "./config.js";
+import { redactValue } from "./redaction.js";
 
 /** Subset of session manager surface we depend on. */
 export interface SessionManagerLike {
@@ -226,7 +227,12 @@ export function normalizeContentForLangfuse(content: unknown, api: string | unde
         type: "function",
         function: {
           name: t.name,
-          arguments: typeof t.arguments === "string" ? t.arguments : JSON.stringify(t.arguments),
+          // Redact before stringifying: once arguments are a JSON string,
+          // field-name-based redaction can no longer see the object keys.
+          arguments:
+            typeof t.arguments === "string"
+              ? t.arguments
+              : JSON.stringify(redactValue(t.arguments)),
         },
       };
     }),
