@@ -27,9 +27,7 @@ After an agent run, check Langfuse for a `pi-agent-run` trace with nested genera
 
 ## Current status
 
-Version `0.1.2` is prepared for npm as `@lifanh/pi-langfuse-extension`.
-
-This package is still in pre-1.0 development. Releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
+This package is published to npm as `@lifanh/pi-langfuse-extension` and is still in pre-1.0 development. Releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
 
 Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
 

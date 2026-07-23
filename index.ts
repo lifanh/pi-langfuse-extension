@@ -59,7 +59,7 @@ interface AssistantMessageEndEvent {
   };
 }
 
-import type { LangfuseAgent, LangfuseTool } from "@langfuse/tracing";
+import type { LangfuseAgent, LangfuseGeneration, LangfuseTool } from "@langfuse/tracing";
 
 import {
   configPathForHome,
@@ -76,6 +76,7 @@ import {
   buildGenerationPayload,
   buildRunPayload,
   buildToolPayload,
+  normalizeContentForLangfuse,
   type RunContextLike,
   type RunPayload,
   type GenerationPayload,
@@ -109,7 +110,9 @@ interface GenerationRun {
   request: BeforeProviderRequestEvent | undefined;
   response: ProviderResponseEvent | undefined;
   payload: GenerationPayload | undefined;
-  generationSpan: import("@langfuse/tracing").LangfuseGeneration | null;
+  generationSpan: LangfuseGeneration | null;
+  /** Set once the span has been `.end()`ed (normally in turn_end). */
+  ended: boolean;
 }
 
 interface CurrentRun {
@@ -122,6 +125,156 @@ interface CurrentRun {
   activeTurnIndex: number;
   activeMessageEnd: AssistantMessageEndEvent | undefined;
   agentSpan: LangfuseAgent | null;
+}
+
+/** A GenerationPayload with no captured content, used when nothing better is available. */
+function emptyGenerationPayload(): GenerationPayload {
+  return {
+    metadata: undefined,
+    model: undefined,
+    modelParameters: undefined,
+    usageDetails: undefined,
+    costDetails: undefined,
+    statusMessage: undefined,
+    isError: false,
+  };
+}
+
+/**
+ * True when `existing` is a generation run whose span is still open. Pi can retry a
+ * provider request within the same turn (same turnIndex); without this check the retry's
+ * `before_provider_request` handler would silently overwrite the map entry and the first
+ * span would never be `.end()`ed.
+ */
+export function shouldSupersedeGeneration(
+  existing: Pick<GenerationRun, "generationSpan" | "ended"> | undefined,
+): boolean {
+  return Boolean(existing?.generationSpan && !existing.ended);
+}
+
+/** Marks a generation payload as superseded before ending the span it belonged to. */
+export function supersedeGenerationPayload(payload: GenerationPayload): GenerationPayload {
+  return {
+    ...payload,
+    metadata: { ...(payload.metadata ?? {}), supersededByRetry: true },
+  };
+}
+
+/** Adds an `interrupted` marker to metadata, used when closing spans left open by an abort. */
+function markInterrupted(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return { ...(metadata ?? {}), interrupted: true };
+}
+
+interface DanglingToolSpan {
+  span: LangfuseTool;
+  payload: CapturedPayload;
+}
+
+interface DanglingGenerationSpan {
+  span: LangfuseGeneration;
+  payload: GenerationPayload;
+}
+
+interface DanglingSpans {
+  tools: DanglingToolSpan[];
+  generations: DanglingGenerationSpan[];
+}
+
+/**
+ * Finds tool and generation spans that were started but never ended — e.g. because the
+ * run was aborted mid-turn — so callers (agent_end, session_shutdown) can close them
+ * before ending the agent span and leave the trace complete.
+ */
+export function collectDanglingSpans(
+  currentRun: Pick<CurrentRun, "tools" | "generations">,
+): DanglingSpans {
+  const tools: DanglingToolSpan[] = [];
+  for (const tool of currentRun.tools.values()) {
+    if (tool.endedAt || !tool.toolSpan) {
+      continue;
+    }
+    tools.push({
+      span: tool.toolSpan,
+      payload: { ...tool.payload, metadata: markInterrupted(tool.payload.metadata) },
+    });
+  }
+
+  const generations: DanglingGenerationSpan[] = [];
+  for (const generation of currentRun.generations.values()) {
+    if (generation.ended || !generation.generationSpan) {
+      continue;
+    }
+    const payload = generation.payload ?? emptyGenerationPayload();
+    generations.push({
+      span: generation.generationSpan,
+      payload: { ...payload, metadata: markInterrupted(payload.metadata) },
+    });
+  }
+
+  return { tools, generations };
+}
+
+function closeDanglingSpans(currentRun: CurrentRun): void {
+  const dangling = collectDanglingSpans(currentRun);
+  for (const tool of dangling.tools) {
+    endToolSpan(tool.span, tool.payload);
+  }
+  for (const generation of dangling.generations) {
+    endGenerationSpan(generation.span, generation.payload);
+  }
+}
+
+/**
+ * Locates the ToolRun entry to close when `tool_execution_end` carries no toolCallId.
+ * Matches the most recently started, not-yet-ended run for the same tool name, since the
+ * start side may have keyed the run under a synthesized id the end event can't reproduce.
+ */
+export function findUnendedToolRunId(
+  tools: Map<string, ToolRun>,
+  toolName: string,
+): string | undefined {
+  let found: string | undefined;
+  for (const [id, run] of tools) {
+    if (run.endedAt) {
+      continue;
+    }
+    if (run.payload.metadata?.["toolName"] !== toolName) {
+      continue;
+    }
+    found = id;
+  }
+  return found;
+}
+
+interface AssistantMessageLike {
+  role?: string | undefined;
+  content?: unknown;
+  api?: string | undefined;
+}
+
+/**
+ * Walks agent_end's message list backwards to find the last assistant turn. The final
+ * entry in `messages` may be a tool-result, user, or custom message (e.g. the run ended
+ * right after a tool call or a bash execution), so `.at(-1)` alone can pick the wrong
+ * message. Takes the narrow `AssistantMessageLike` shape (rather than Pi's full
+ * `AgentMessage` union) so the return type keeps `content`/`api` available regardless of
+ * which non-assistant message variants exist upstream.
+ */
+export function lastAssistantMessage(
+  messages: readonly AssistantMessageLike[] | undefined,
+): AssistantMessageLike | undefined {
+  if (!messages) {
+    return undefined;
+  }
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role === "assistant") {
+      return message;
+    }
+  }
+  return undefined;
 }
 
 function notify(
@@ -460,14 +613,14 @@ async function testConnectivity(config: LangfuseConfig): Promise<{ ok: boolean; 
   }
 }
 
-function adaptContext(ctx: ExtensionContext): RunContextLike {
+function adaptContext(ctx: ExtensionContext, captureSystemPrompt: boolean): RunContextLike {
   const adapted: RunContextLike = {
     sessionManager: ctx.sessionManager,
   };
   if (ctx.model) {
     adapted.model = { id: ctx.model.id, provider: ctx.model.provider };
   }
-  if (typeof ctx.getSystemPrompt === "function") {
+  if (captureSystemPrompt && typeof ctx.getSystemPrompt === "function") {
     adapted.systemPrompt = ctx.getSystemPrompt();
   }
   return adapted;
@@ -617,7 +770,11 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
         "warning",
       );
     }
-    const payload = buildRunPayload(event, adaptContext(ctx), config);
+    const payload = buildRunPayload(
+      event,
+      adaptContext(ctx, config.capturePolicy.captureSystemPrompt),
+      config,
+    );
     const agentSpan = createAgentSpan("pi-agent-run", payload);
     if (agentSpan) {
       const traceAttrs: TraceAttributes = {
@@ -655,6 +812,15 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       return;
     }
     const turnIndex = currentRun.activeTurnIndex;
+    const existing = currentRun.generations.get(turnIndex);
+    if (shouldSupersedeGeneration(existing)) {
+      // Pi retried the provider request within the same turn: close the previous
+      // generation span before replacing its map entry so it doesn't leak.
+      endGenerationSpan(
+        existing?.generationSpan ?? null,
+        supersedeGenerationPayload(existing?.payload ?? emptyGenerationPayload()),
+      );
+    }
     const payload = buildGenerationPayload(event, undefined, { turnIndex }, undefined, config);
     const generationSpan = createGenerationSpan(
       currentRun.agentSpan,
@@ -667,6 +833,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       response: undefined,
       payload,
       generationSpan,
+      ended: false,
     });
   });
 
@@ -689,6 +856,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       response: event,
       payload,
       generationSpan: existing?.generationSpan ?? null,
+      ended: existing?.ended ?? false,
     });
   });
 
@@ -719,6 +887,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       response: existing?.response,
       payload,
       generationSpan: existing?.generationSpan ?? null,
+      ended: true,
     });
   });
 
@@ -745,7 +914,8 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     if (!currentRun || !config) {
       return;
     }
-    const id = event.toolCallId || "";
+    const id =
+      event.toolCallId || findUnendedToolRunId(currentRun.tools, event.toolName) || "";
     const existing = currentRun.tools.get(id);
     const endPayload = buildToolPayload(
       {
@@ -776,8 +946,12 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
       return;
     }
     currentRun.endedAt = new Date();
-    const rawOutput = config.capturePolicy.captureOutputs
-      ? event.messages.at(-1)
+    closeDanglingSpans(currentRun);
+    const assistantMessage = config.capturePolicy.captureOutputs
+      ? lastAssistantMessage(event.messages)
+      : undefined;
+    const rawOutput = assistantMessage
+      ? normalizeContentForLangfuse(assistantMessage.content, assistantMessage.api)
       : undefined;
     const output = rawOutput !== undefined ? redactValue(rawOutput) : undefined;
     endAgentSpan(currentRun.agentSpan, output);
@@ -789,6 +963,9 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
+    if (currentRun) {
+      closeDanglingSpans(currentRun);
+    }
     if (currentRun?.agentSpan) {
       endAgentSpan(currentRun.agentSpan, undefined);
     }
