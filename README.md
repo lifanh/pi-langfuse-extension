@@ -3,9 +3,51 @@
 [![npm version](https://img.shields.io/npm/v/@lifanh/pi-langfuse-extension.svg)](https://www.npmjs.com/package/@lifanh/pi-langfuse-extension)
 [![License](https://img.shields.io/npm/l/@lifanh/pi-langfuse-extension.svg)](LICENSE)
 
-Langfuse observability for [Pi Coding Agent](https://github.com/badlogic/pi-mono).
+[Langfuse](https://langfuse.com) observability for the [Pi Coding Agent](https://github.com/badlogic/pi-mono).
 
-Use this extension to send Pi agent runs, model calls, tool executions, token usage, cost, and errors to Langfuse. By default it sends metadata only. Prompt, response, tool I/O, system prompt, and cwd capture are opt-in. Captured local paths are redacted or replaced with stable hashes before transmission.
+When you run a Pi agent, you can't easily see what it did: which model and provider it used, how many tokens each turn burned, what it cost, which tools ran, or where a provider or tool errored. This extension sends each Pi run to Langfuse as a structured trace so you can answer those questions.
+
+It is **private by default**: only metadata is sent. Prompts, responses, tool I/O, the system prompt, and your working directory are opt-in per field, and everything captured is redacted before it leaves your machine.
+
+<!--
+  TODO(maintainer): add a screenshot of a real `pi-agent-run` trace in the Langfuse
+  UI here — the nested agent → generation → tool tree with token/cost is the single
+  most useful thing a new reader can see. Suggested:
+  ![Example pi-agent-run trace in Langfuse](docs/images/example-trace.png)
+-->
+
+A `pi-agent-run` trace looks like this:
+
+```text
+pi-agent-run                          (agent)      model=claude-… provider=…  session=…
+├── generation:0                      (generation) 1,240 tokens   $0.004  stop=tool_use
+│     └── tool:read                   (tool)       isError=false
+├── generation:1                      (generation) 2,010 tokens   $0.011  stop=end_turn
+│     ├── tool:bash                   (tool)       isError=false
+│     └── tool:edit                   (tool)       isError=true   ← surfaced as ERROR
+└── generation:2                      (generation)   890 tokens   $0.003  stop=end_turn
+```
+
+## Contents
+
+- [Requirements](#requirements)
+- [Quickstart](#quickstart)
+- [What you get](#what-you-get)
+- [Privacy and content capture](#privacy-and-content-capture)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Verify setup](#verify-setup)
+- [Disable or reset](#disable-or-reset)
+- [Troubleshooting](#troubleshooting)
+- [How it works](#how-it-works)
+- [Development](#development)
+- [License](#license)
+
+## Requirements
+
+- [Pi Coding Agent](https://github.com/badlogic/pi-mono) installed.
+- Node.js `>= 22`.
+- A Langfuse project and its public/secret API keys ([Langfuse Cloud](https://cloud.langfuse.com) or a self-hosted instance).
 
 ## Quickstart
 
@@ -23,15 +65,11 @@ Configure Langfuse from inside Pi:
 /langfuse-status
 ```
 
-After an agent run, check Langfuse for a `pi-agent-run` trace with nested generation and tool observations.
+Then start an agent run and check Langfuse for a `pi-agent-run` trace with nested generation and tool observations.
 
-## Current status
+> This package is pre-1.0 and under active development. Interfaces and defaults may change between minor versions.
 
-This package is published to npm as `@lifanh/pi-langfuse-extension` and is still in pre-1.0 development. Releases are published from GitHub Releases through the `Publish` GitHub Actions workflow using npm Trusted Publishing.
-
-Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
-
-## What it records
+## What you get
 
 Each Pi agent run creates:
 
@@ -39,7 +77,7 @@ Each Pi agent run creates:
 - `generation` observations for provider/model calls
 - `tool` observations for tool executions
 
-Default traces answer questions like:
+Default (metadata-only) traces answer questions like:
 
 - Did a Pi agent run happen?
 - Which model and provider were used?
@@ -48,7 +86,7 @@ Default traces answer questions like:
 - What did the call cost, if Pi/provider reported cost?
 - Did a provider or tool report an error?
 
-Default metadata includes:
+What each observation carries by default:
 
 | Observation | Sent by default | Not sent by default |
 | --- | --- | --- |
@@ -56,17 +94,15 @@ Default metadata includes:
 | Generation | `model`, model parameters, usage, cost, provider/API, response id, stop reason, turn index, HTTP status/headers | provider request payload and assistant response content |
 | Tool | `toolName`, `toolCallId`, `isError` | tool arguments and tool results |
 
-## Enabling content capture
+## Privacy and content capture
 
-Content capture is controlled by explicit flags. Captured content is redacted before it is sent to Langfuse.
+Content capture is off by default and controlled by explicit per-field flags. Anything you enable is still passed through a redaction pipeline (see [How it works](#how-it-works)) before it is sent to Langfuse.
 
 Enable individual fields:
 
 ```text
 /langfuse-configure captureInputs=true captureOutputs=true
 ```
-
-Available flags:
 
 | Flag | Default | When enabled |
 | --- | --- | --- |
@@ -111,13 +147,15 @@ export LANGFUSE_SECRET_KEY=sk-lf-...
 export LANGFUSE_HOST=https://cloud.langfuse.com
 ```
 
-Configuration source is selected as a whole:
+### Which configuration wins
+
+The source is selected as a whole, not merged field by field:
 
 1. If both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, environment configuration is used. `LANGFUSE_HOST` or `LANGFUSE_BASE_URL` and `LANGFUSE_CAPTURE_*` flags are read from the same environment.
 2. Otherwise, the saved config file is used (`~/.pi/agent/@lifanh/pi-langfuse-extension/config.json`).
 3. Built-in defaults fill in missing optional values (`https://cloud.langfuse.com`, metadata-only tracing, all content capture flags off).
 
-Environment host and capture flags are not merged into a saved config unless the environment also provides both credentials. If both environment credentials and the config file are present, environment configuration wins. `/langfuse-status` shows this as `environment variables (overrides config file)`.
+Environment host and capture flags are not merged into a saved config unless the environment also provides both credentials. If both environment credentials and the config file are present, environment configuration wins, and `/langfuse-status` shows this as `environment variables (overrides config file)`.
 
 ## Commands
 
@@ -163,7 +201,13 @@ To keep tracing but disable content capture:
 | No prompt/response content appears in Langfuse | This is the default. Enable only the needed fields with `/langfuse-configure`. |
 | Pi runs continue despite Langfuse errors | Expected. Langfuse failures are isolated; check `/langfuse-status` for the last captured error. |
 
-## Architecture
+---
+
+The sections below are for contributors and anyone who wants to understand the internals.
+
+## How it works
+
+The extension maps Pi's agent lifecycle events onto Langfuse observations:
 
 ```text
 Pi Agent Events
@@ -180,7 +224,7 @@ Pi Agent Events
   └── session_shutdown          ──▶  shutdown()             ──▶  clear footer
 ```
 
-Transport details:
+### Transport
 
 - Uses `BasicTracerProvider` from `@opentelemetry/sdk-trace-base` with `LangfuseSpanProcessor` from `@langfuse/otel`.
 - Creates Langfuse observations via `startObservation` from `@langfuse/tracing`.
@@ -189,7 +233,7 @@ Transport details:
 - Reinitializes transport if saved/env host or credentials change during a long-running Pi process.
 - Records the last transport error for `/langfuse-status` while keeping Langfuse failures isolated from Pi agent execution.
 
-## Redaction
+### Redaction
 
 Captured content passes through a shared redaction pipeline before transmission. The redactor covers:
 
@@ -221,7 +265,7 @@ Changes here should preserve these constraints:
 - REST fallback remains disabled until duplicate/idempotent behavior is tested.
 - Tests must cover redaction and disabled capture behavior before transport changes.
 
-## Release
+### Release
 
 Publishing is automated through GitHub Actions:
 
@@ -231,6 +275,8 @@ Publishing is automated through GitHub Actions:
 4. The `Publish` workflow runs `npm ci`, typechecking, tests, build, `npm pack --dry-run`, and `npm publish`.
 
 The workflow publishes to the official npm registry with OIDC-based npm Trusted Publishing, so no long-lived npm token is stored in GitHub.
+
+Do not publish a stable `1.0.0` until golden trace tests, REST fallback behavior, and production burn-in are completed.
 
 ## License
 
