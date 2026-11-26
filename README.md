@@ -94,6 +94,10 @@ What each observation carries by default:
 | Generation | `model`, model parameters, usage, cost, provider/API, response id, stop reason, turn index, HTTP status/headers | provider request payload and assistant response content |
 | Tool | `toolName`, `toolCallId`, `isError` | tool arguments and tool results |
 
+If Pi reports multiple HTTP responses for one generation, `priorHttpFailures` counts the earlier responses with status 400 or above. For example, 429 → 503 → 200 records two prior failures and a final status of 200. Only the final response's headers are retained; attempts that never returned an HTTP response aren't counted.
+
+When Pi supplies a total cost, `totalCostSource` is `billed` if the provider reported the total, or `estimate` otherwise. This label applies only to the total, not the per-token cost breakdown. No total means no label.
+
 ## Privacy and content capture
 
 Content capture is off by default and controlled by explicit per-field flags. Anything you enable is still passed through a redaction pipeline (see [How it works](#how-it-works)) before it is sent to Langfuse.

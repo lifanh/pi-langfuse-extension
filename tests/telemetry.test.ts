@@ -125,9 +125,22 @@ test("buildGenerationPayload captures generation metadata and usage without IO b
     responseId: "msg-123",
     stopReason: "stop",
     turnIndex: 2,
+    totalCostSource: "estimate",
     httpStatus: 200,
     responseHeaders: { "x-request-id": "req-123" },
   });
+});
+
+test("generation cost provenance describes only a reported total, including a billed zero", () => {
+  for (const [cost, source] of [
+    [{ total: 0, input: 0.03, totalFromProvider: true }, "billed"],
+    [{ total: 0.03, totalFromProvider: false }, "estimate"],
+    [{ input: 0.03 }, undefined],
+  ] as const) {
+    const result = buildGenerationPayload(undefined, undefined, { message: { usage: { cost } } }, undefined, configWithDefaults());
+    assert.equal(result.metadata?.["totalCostSource"], source);
+    assert.deepEqual(result.costDetails, Object.fromEntries(Object.entries(cost).filter(([key]) => key !== "totalFromProvider")));
+  }
 });
 
 test("buildGenerationPayload captures redacted generation IO when enabled", () => {

@@ -39,6 +39,7 @@ export interface ProviderRequestEventLike {
 export interface ProviderResponseEventLike {
   status?: number | undefined;
   headers?: Record<string, string> | undefined;
+  priorHttpFailures?: number;
 }
 
 export interface UsageLike {
@@ -53,6 +54,7 @@ export interface UsageLike {
     cacheRead?: number | undefined;
     cacheWrite?: number | undefined;
     total?: number | undefined;
+    totalFromProvider?: boolean | undefined;
   } | undefined;
 }
 
@@ -340,14 +342,17 @@ export function buildGenerationPayload(
     message?.model,
     modelFromPayload(request?.payload),
   );
+  const cost = message?.usage?.cost;
   const metadata = {
     provider: message?.provider,
     api: message?.api,
     responseId: message?.responseId,
     stopReason: message?.stopReason,
     turnIndex: turn?.turnIndex,
+    ...(typeof cost?.total === "number" ? { totalCostSource: cost.totalFromProvider ? "billed" : "estimate" } : {}),
     httpStatus: response?.status,
     responseHeaders: response?.headers,
+    ...(response?.priorHttpFailures ? { priorHttpFailures: response.priorHttpFailures } : {}),
   };
   const captured = applyCapturePolicy(
     {

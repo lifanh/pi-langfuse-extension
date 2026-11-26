@@ -7,20 +7,14 @@ interface HandlerMap {
   [event: string]: ((event?: unknown, ctx?: unknown) => Promise<void>) | undefined;
 }
 
-interface TraceListItem {
-  id: string;
-  sessionId?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
 interface ObservationListItem {
   id: string;
+  traceId: string;
   type?: string;
-  name?: string;
   parentObservationId?: string | null;
-  input?: unknown;
-  output?: unknown;
-  metadata?: Record<string, unknown> | null;
+  input?: string | null;
+  output?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 function shouldRunE2e(): boolean {
@@ -54,26 +48,24 @@ async function langfuseGet<T>(path: string): Promise<T> {
   return JSON.parse(body) as T;
 }
 
-async function waitForTrace(sessionId: string): Promise<TraceListItem> {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const traces = await langfuseGet<{ data?: TraceListItem[] }>(
-      "/api/public/traces?limit=50&orderBy=timestamp.desc",
-    );
-    const trace = traces.data?.find((candidate) => {
-      const metadataSessionId =
-        typeof candidate.metadata === "object" &&
-        candidate.metadata !== null &&
-        !Array.isArray(candidate.metadata)
-          ? candidate.metadata["sessionId"]
-          : undefined;
-      return candidate.sessionId === sessionId || metadataSessionId === sessionId;
-    });
-    if (trace) {
-      return trace;
+async function waitForObservations(sessionId: string, started: Date) {
+  const query = new URLSearchParams({
+    filter: JSON.stringify([{ type: "string", column: "sessionId", operator: "=", value: sessionId }]),
+    fields: "core,basic,io,metadata",
+    fromStartTime: started.toISOString(),
+    toStartTime: new Date(Date.now() + 1000).toISOString(),
+  });
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const { data } = await langfuseGet<{ data: ObservationListItem[] }>(`/api/public/v2/observations?${query}`);
+    const agent = data.find((obs) => obs.type === "AGENT");
+    const generation = data.find((obs) => obs.type === "GENERATION");
+    const tool = data.find((obs) => obs.type === "TOOL");
+    if (agent && generation && tool) {
+      return { agent, generation, tool };
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error(`Trace with sessionId ${sessionId} did not arrive in Langfuse`);
+  throw new Error(`Missing agent, generation or tool observation for session ${sessionId}`);
 }
 
 test("e2e: sends agent, generation, and tool observations to Langfuse", async (t) => {
@@ -88,7 +80,8 @@ test("e2e: sends agent, generation, and tool observations to Langfuse", async (t
   process.env["LANGFUSE_CAPTURE_OUTPUTS"] = "true";
   process.env["LANGFUSE_CAPTURE_TOOL_IO"] = "true";
 
-  const sessionId = `pi-langfuse-e2e-${Date.now()}`;
+  const started = new Date();
+  const sessionId = `pi-langfuse-e2e-${crypto.randomUUID()}`;
   const handlers: HandlerMap = {};
   const pi = {
     registerCommand: () => {},
@@ -120,6 +113,11 @@ test("e2e: sends agent, generation, and tool observations to Langfuse", async (t
       messages: [{ role: "user", content: "Bearer sk-lf-should-redact" }],
       temperature: 0.1,
     },
+  });
+  await handlers.after_provider_response?.({
+    type: "after_provider_response",
+    status: 429,
+    headers: {},
   });
   await handlers.after_provider_response?.({
     type: "after_provider_response",
@@ -164,23 +162,20 @@ test("e2e: sends agent, generation, and tool observations to Langfuse", async (t
     message: assistantMessage,
     toolResults: [],
   });
-  await handlers.agent_end?.({ type: "agent_end", messages: [assistantMessage] });
-  await handlers.session_shutdown?.();
+  await handlers.agent_end?.({ type: "agent_end", messages: [assistantMessage] }, { hasUI: false });
+  await handlers.session_shutdown?.({ type: "session_shutdown" }, { hasUI: false });
 
-  const trace = await waitForTrace(sessionId);
-  const observations = await langfuseGet<{ data?: ObservationListItem[] }>(
-    `/api/public/observations?traceId=${trace.id}`,
-  );
-  const agent = observations.data?.find((obs) => obs.type === "AGENT");
-  const generation = observations.data?.find((obs) => obs.type === "GENERATION");
-  const tool = observations.data?.find((obs) => obs.type === "TOOL");
-
-  assert.ok(agent, "agent observation exists");
-  assert.ok(generation, "generation observation exists");
-  assert.ok(tool, "tool observation exists");
+  const { agent, generation, tool } = await waitForObservations(sessionId, started);
+  assert.equal(agent.parentObservationId, null);
+  assert.equal(generation.traceId, agent.traceId);
+  assert.equal(tool.traceId, agent.traceId);
   assert.equal(tool.parentObservationId, agent.id);
   assert.equal(generation.parentObservationId, agent.id);
-  assert.ok(JSON.stringify(generation.input).includes("[REDACTED_SECRET]"));
-  assert.ok(!JSON.stringify(generation.input).includes("sk-lf-should-redact"));
-  assert.ok(JSON.stringify(tool.output).includes("[REDACTED_SECRET]"));
+  assert.equal(Number(generation.metadata?.["priorHttpFailures"]), 1);
+  assert.equal(Number(generation.metadata?.["httpStatus"]), 200);
+  for (const io of [generation.input, tool.output]) {
+    assert.ok(io);
+    assert.ok(io.includes("[REDACTED_SECRET]"));
+    assert.ok(!io.includes("sk-lf-should-redact"));
+  }
 });

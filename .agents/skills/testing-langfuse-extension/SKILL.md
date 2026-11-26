@@ -45,19 +45,13 @@ Then fire events in order:
 
 ## Verifying Traces in Langfuse
 
-Query the REST API with basic auth (public_key:secret_key):
+With credentials for a disposable Langfuse Cloud test project, run the synthetic lifecycle and read back its observations:
 
 ```bash
-# List recent traces
-curl -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/traces?limit=5&orderBy=timestamp.desc"
-
-# Get observations for a trace
-curl -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/observations?traceId=<TRACE_ID>"
+RUN_LANGFUSE_E2E=true npx tsx --test tests/e2e-langfuse.test.ts
 ```
 
-Allow 5-10 seconds after shutdown for Langfuse ingestion before querying.
+The test polls `/api/public/v2/observations` for its unique session until the agent, generation, and tool have arrived, then checks their hierarchy and redacted I/O. A successful `/langfuse-test` checks credentials, not delivery.
 
 ## Key Test Scenarios
 

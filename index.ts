@@ -108,7 +108,7 @@ interface ToolRun {
 interface GenerationRun {
   turnIndex: number;
   request: BeforeProviderRequestEvent | undefined;
-  response: ProviderResponseEvent | undefined;
+  response: (ProviderResponseEvent & { priorHttpFailures?: number }) | undefined;
   payload: GenerationPayload | undefined;
   generationSpan: LangfuseGeneration | null;
   /** Set once the span has been `.end()`ed (normally in turn_end). */
@@ -843,9 +843,14 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     }
     const turnIndex = currentRun.activeTurnIndex;
     const existing = currentRun.generations.get(turnIndex);
+    const previous = existing?.response;
+    const response = {
+      ...event,
+      priorHttpFailures: (previous?.priorHttpFailures ?? 0) + (previous && previous.status >= 400 ? 1 : 0),
+    };
     const payload = buildGenerationPayload(
       existing?.request,
-      event,
+      response,
       { turnIndex },
       undefined,
       config,
@@ -853,7 +858,7 @@ export default async function lifanhPiLangfuse(pi: ExtensionAPI): Promise<void> 
     currentRun.generations.set(turnIndex, {
       turnIndex,
       request: existing?.request,
-      response: event,
+      response,
       payload,
       generationSpan: existing?.generationSpan ?? null,
       ended: existing?.ended ?? false,
