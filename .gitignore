@@ -9,3 +9,6 @@ dist/
 !.env.example
 
 .tmp-test-config/
+
+# Amp orb portal registrations
+.amp/portals/*

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Prepares a fresh Amp orb: Node.js toolchain check and npm dependencies.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+step() {
+  local name="$1"
+  shift
+  echo "==> $name"
+  local start=$SECONDS
+  "$@"
+  echo "<== $name ($((SECONDS - start))s)"
+}
+
+check_node() {
+  # package.json requires Node >= 22; the orb base image ships a newer Node.
+  local major
+  major="$(node -p 'process.versions.node.split(".")[0]')"
+  if ((major < 22)); then
+    echo "Node.js >= 22 is required, found $(node -v)" >&2
+    exit 1
+  fi
+  echo "node $(node -v), npm $(npm -v)"
+}
+
+step "Check Node.js" check_node
+# Warm reinstalls take ~10s from the restored npm cache, so no lockfile marker.
+step "Install npm dependencies" npm ci --no-audit --no-fund --no-update-notifier
