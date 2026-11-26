@@ -141,7 +141,7 @@ test("transport: metadata attributes propagate to spans", async () => {
   const span = spans[0];
   assert.ok(span);
   assert.equal(span.name, "run");
-  assert.equal(span.attributes["langfuse.observation.metadata.model"], "claude");
+  assert.equal(JSON.parse(String(span.attributes["langfuse.observation.metadata.model"])), "claude");
   assert.equal(span.attributes["langfuse.observation.type"], "agent");
 
   await provider.shutdown();
@@ -216,7 +216,7 @@ test("transport: init sets trace attributes without global context registration"
       "pi-coding-agent",
     ]);
     assert.equal(spanAttributes["session.id"], "session-123");
-    assert.equal(spanAttributes["langfuse.trace.metadata.agent"], "pi");
+    assert.equal(JSON.parse(String(spanAttributes["langfuse.trace.metadata.agent"])), "pi");
     assert.equal(spanAttributes["langfuse.trace.metadata.count"], "2");
     assert.equal(spanAttributes["langfuse.trace.metadata.enabled"], "true");
     assert.equal(spanAttributes["langfuse.trace.metadata.nested"], undefined);
@@ -277,7 +277,7 @@ test("transport: child spans inherit trace attributes from agent span", async ()
         "pi-coding-agent",
       ]);
       assert.equal(spanAttributes["session.id"], "session-123");
-      assert.equal(spanAttributes["langfuse.trace.metadata.agent"], "pi");
+      assert.equal(JSON.parse(String(spanAttributes["langfuse.trace.metadata.agent"])), "pi");
     }
   } finally {
     await shutdown();
@@ -309,7 +309,7 @@ test("transport: trace attributes follow Langfuse propagated string limits", asy
       traceName: "x".repeat(201),
       tags: ["kept", "x".repeat(201)],
       sessionId: "x".repeat(201),
-      metadata: { kept: "ok", dropped: "x".repeat(201) },
+      metadata: { kept: '"'.repeat(99), dropped: '"'.repeat(99) + "x" },
     });
 
     const tool = createToolSpan(root, "tool:shell", { metadata: undefined });
@@ -326,7 +326,7 @@ test("transport: trace attributes follow Langfuse propagated string limits", asy
       assert.equal(spanAttributes["langfuse.trace.name"], undefined);
       assert.deepEqual(spanAttributes["langfuse.trace.tags"], ["kept"]);
       assert.equal(spanAttributes["session.id"], undefined);
-      assert.equal(spanAttributes["langfuse.trace.metadata.kept"], "ok");
+      assert.equal(JSON.parse(String(spanAttributes["langfuse.trace.metadata.kept"])), '"'.repeat(99));
       assert.equal(spanAttributes["langfuse.trace.metadata.dropped"], undefined);
     }
   } finally {

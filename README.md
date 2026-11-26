@@ -47,7 +47,7 @@ pi-agent-run                          (agent)      model=claude-… provider=…
 
 - [Pi Coding Agent](https://github.com/badlogic/pi-mono) installed.
 - Node.js `>= 22`.
-- A Langfuse project and its public/secret API keys ([Langfuse Cloud](https://cloud.langfuse.com) or a self-hosted instance).
+- A project and its public/secret API keys on [Langfuse Cloud](https://cloud.langfuse.com) or self-hosted Langfuse **4.59.0 or later**. Upgrade older servers before using this extension with the [Langfuse v6 SDK](https://langfuse.com/docs/observability/sdk/upgrade-path/js-v5-to-v6).
 
 ## Quickstart
 

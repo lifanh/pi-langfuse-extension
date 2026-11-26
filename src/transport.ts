@@ -123,30 +123,6 @@ export interface TraceAttributes {
   metadata?: Record<string, unknown>;
 }
 
-function coerceMetadataToStrings(
-  metadata: Record<string, unknown> | undefined,
-): Record<string, string> | undefined {
-  if (!metadata) {
-    return undefined;
-  }
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(metadata)) {
-    if (value === undefined || value === null) {
-      continue;
-    }
-    if (typeof value === "string") {
-      out[key] = value;
-    } else if (
-      typeof value === "number" ||
-      typeof value === "boolean" ||
-      typeof value === "bigint"
-    ) {
-      out[key] = String(value);
-    }
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 function isValidPropagatedString(value: string): boolean {
   return value.length <= MAX_PROPAGATED_STRING_LENGTH;
 }
@@ -165,12 +141,14 @@ function buildTraceSpanAttributes(
   if (attrs.sessionId && isValidPropagatedString(attrs.sessionId)) {
     spanAttributes["session.id"] = attrs.sessionId;
   }
-  const metadata = coerceMetadataToStrings(attrs.metadata);
-  if (metadata) {
-    for (const [key, value] of Object.entries(metadata)) {
-      if (isValidPropagatedString(value)) {
-        spanAttributes[`langfuse.trace.metadata.${key}`] = value;
-      }
+  for (const [key, value] of Object.entries(attrs.metadata ?? {})) {
+    if (typeof value !== "string" && typeof value !== "boolean" &&
+        typeof value !== "bigint" && !Number.isFinite(value)) {
+      continue;
+    }
+    const encoded = JSON.stringify(typeof value === "bigint" ? String(value) : value);
+    if (isValidPropagatedString(encoded)) {
+      spanAttributes[`langfuse.trace.metadata.${key}`] = encoded;
     }
   }
   return spanAttributes;
